@@ -3,7 +3,7 @@
 from typing import Any
 
 
-def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
+def process_receipt(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Process an incoming SES email event.
 
     1. Parse the email to extract attachments

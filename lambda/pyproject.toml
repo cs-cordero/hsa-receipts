@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "hsa-receipts"
+name = "hsa-receipt-archiver"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
@@ -22,7 +22,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/hsa_receipts"]
+packages = ["src/hsa_receipt_archiver"]
 
 [tool.ruff]
 target-version = "py313"
@@ -50,7 +50,7 @@ indent-style = "space"
 quote-style = "double"
 
 [tool.ruff.lint.isort]
-known-first-party = ["hsa_receipts"]
+known-first-party = ["hsa_receipt_archiver"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

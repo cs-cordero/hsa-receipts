@@ -1,24 +1,158 @@
 import * as cdk from "aws-cdk-lib";
+import * as budgets from "aws-cdk-lib/aws-budgets";
+import * as iam from "aws-cdk-lib/aws-iam";
+import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as logs from "aws-cdk-lib/aws-logs";
+import * as s3 from "aws-cdk-lib/aws-s3";
+import * as ses from "aws-cdk-lib/aws-ses";
+import * as sesActions from "aws-cdk-lib/aws-ses-actions";
 import type { Construct } from "constructs";
 
-export class HsaReceiptsStack extends cdk.Stack {
+function requireContext(stack: cdk.Stack, key: string): string {
+    const value = stack.node.tryGetContext(key) as string | undefined;
+    if (!value) {
+        throw new Error(`Missing required CDK context value: "${key}". Pass it with -c ${key}=<value>`);
+    }
+    return value;
+}
+
+export class HsaReceiptArchiverStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
 
-        cdk.Tags.of(this).add("project", "hsa-receipts");
+        const domainName = requireContext(this, "domainName");
+        const notificationEmail = requireContext(this, "notificationEmail");
 
-        // TODO: S3 bucket (7-day lifecycle on raw emails, permanent for receipts/ledger)
+        cdk.Tags.of(this).add("project", "hsa-receipt-archiver");
 
-        // TODO: DynamoDB table (rate limiting)
+        // S3 Bucket
+        const bucket = new s3.Bucket(this, "ReceiptsBucket", {
+            bucketName: `hsa-receipts-${this.account}-${this.region}`,
+            blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+            encryption: s3.BucketEncryption.S3_MANAGED,
+            removalPolicy: cdk.RemovalPolicy.RETAIN,
+            lifecycleRules: [
+                {
+                    prefix: "raw-emails/",
+                    tagFilters: { status: "processed" },
+                    expiration: cdk.Duration.days(7),
+                },
+                {
+                    prefix: "raw-emails/",
+                    expiration: cdk.Duration.days(30),
+                },
+            ],
+        });
 
-        // TODO: Lambda function (Python 3.13, 1GB RAM, 5min timeout, concurrency=2)
+        // CloudWatch Log Group
+        const logGroup = new logs.LogGroup(this, "LambdaLogGroup", {
+            logGroupName: "/aws/lambda/hsa-receipt-archiver",
+            retention: logs.RetentionDays.ONE_MONTH,
+            removalPolicy: cdk.RemovalPolicy.DESTROY,
+        });
 
-        // TODO: SES receipt rule set
+        // Lambda Function
+        const handler = new lambda.Function(this, "ReceiptArchiver", {
+            functionName: "hsa-receipt-archiver",
+            runtime: lambda.Runtime.PYTHON_3_13,
+            handler: "hsa_receipt_archiver.handler.process_receipt",
+            code: lambda.Code.fromAsset("../lambda", {
+                bundling: {
+                    image: lambda.Runtime.PYTHON_3_13.bundlingImage,
+                    command: [
+                        "bash",
+                        "-c",
+                        "pip install -r requirements.txt -t /asset-output && cp -r src/hsa_receipt_archiver /asset-output/",
+                    ],
+                },
+            }),
+            memorySize: 1024,
+            timeout: cdk.Duration.minutes(5),
+            reservedConcurrentExecutions: 2,
+            logGroup,
+            environment: {
+                BUCKET_NAME: bucket.bucketName,
+                SSM_API_KEY_PARAM: "/hsa-receipt-archiver/anthropic-api-key",
+                SSM_ALLOWED_SENDERS_PARAM: "/hsa-receipt-archiver/allowed-senders",
+                SSM_DOMAIN_NAME_PARAM: "/hsa-receipt-archiver/domain-name",
+            },
+        });
 
-        // TODO: CloudWatch log group (7-day retention)
+        // IAM Permissions
+        bucket.grantReadWrite(handler);
 
-        // TODO: IAM roles/permissions
+        handler.addToRolePolicy(
+            new iam.PolicyStatement({
+                actions: ["ssm:GetParameter"],
+                resources: [
+                    cdk.Arn.format(
+                        {
+                            service: "ssm",
+                            resource: "parameter",
+                            resourceName: "hsa-receipt-archiver/*",
+                        },
+                        this,
+                    ),
+                ],
+            }),
+        );
 
-        // TODO: Budget alerts ($5, $8, $10)
+        handler.addToRolePolicy(
+            new iam.PolicyStatement({
+                actions: ["ses:SendEmail", "ses:SendRawEmail"],
+                resources: ["*"],
+            }),
+        );
+
+        // SES Receipt Rule Set + Rule
+        const ruleSet = new ses.ReceiptRuleSet(this, "ReceiptRuleSet", {
+            receiptRuleSetName: "hsa-receipt-archiver",
+        });
+
+        ruleSet.addRule("ReceiptRule", {
+            recipients: [`receipts@${domainName}`],
+            actions: [
+                new sesActions.S3({
+                    bucket,
+                    objectKeyPrefix: "raw-emails/",
+                }),
+                new sesActions.Lambda({
+                    function: handler,
+                }),
+            ],
+        });
+
+        // Budget Alerts
+        const thresholds = [
+            { amount: 5, pct: 50 },
+            { amount: 8, pct: 80 },
+            { amount: 10, pct: 100 },
+        ];
+
+        new budgets.CfnBudget(this, "MonthlyBudget", {
+            budget: {
+                budgetName: "hsa-receipt-archiver-monthly",
+                budgetType: "COST",
+                timeUnit: "MONTHLY",
+                budgetLimit: {
+                    amount: 10,
+                    unit: "USD",
+                },
+            },
+            notificationsWithSubscribers: thresholds.map((t) => ({
+                notification: {
+                    notificationType: "ACTUAL",
+                    comparisonOperator: "GREATER_THAN",
+                    threshold: t.pct,
+                    thresholdType: "PERCENTAGE",
+                },
+                subscribers: [
+                    {
+                        subscriptionType: "EMAIL",
+                        address: notificationEmail,
+                    },
+                ],
+            })),
+        });
     }
 }

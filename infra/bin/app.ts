@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import * as cdk from "aws-cdk-lib";
-import { HsaReceiptsStack } from "../lib/stack.js";
+import { HsaReceiptArchiverStack } from "../lib/stack";
 
 const app = new cdk.App();
-new HsaReceiptsStack(app, "HsaReceiptsStack", {
+new HsaReceiptArchiverStack(app, "HsaReceiptArchiverStack", {
     env: {
         account: process.env.CDK_DEFAULT_ACCOUNT,
         region: "us-east-1",
