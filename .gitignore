@@ -1,0 +1,37 @@
+# Node / CDK
+node_modules/
+cdk.out/
+*.js
+*.d.ts
+*.js.map
+!eslint.config.mjs
+!prettier.config.mjs
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.venv/
+*.so
+
+# uv
+uv.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
