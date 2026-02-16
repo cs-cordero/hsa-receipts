@@ -6,22 +6,14 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as ses from "aws-cdk-lib/aws-ses";
 import * as sesActions from "aws-cdk-lib/aws-ses-actions";
+import * as sns from "aws-cdk-lib/aws-sns";
 import type { Construct } from "constructs";
 
-function requireContext(stack: cdk.Stack, key: string): string {
-    const value = stack.node.tryGetContext(key) as string | undefined;
-    if (!value) {
-        throw new Error(`Missing required CDK context value: "${key}". Pass it with -c ${key}=<value>`);
-    }
-    return value;
-}
+const DOMAIN_NAME = "hsa.corderohq.com";
 
 export class HsaReceiptArchiverStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
-
-        const domainName = requireContext(this, "domainName");
-        const notificationEmail = requireContext(this, "notificationEmail");
 
         cdk.Tags.of(this).add("project", "hsa-receipt-archiver");
 
@@ -72,9 +64,9 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
             logGroup,
             environment: {
                 BUCKET_NAME: bucket.bucketName,
+                DOMAIN_NAME,
                 SSM_API_KEY_PARAM: "/hsa-receipt-archiver/anthropic-api-key",
                 SSM_ALLOWED_SENDERS_PARAM: "/hsa-receipt-archiver/allowed-senders",
-                SSM_DOMAIN_NAME_PARAM: "/hsa-receipt-archiver/domain-name",
             },
         });
 
@@ -110,7 +102,7 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
         });
 
         ruleSet.addRule("ReceiptRule", {
-            recipients: [`receipts@${domainName}`],
+            recipients: [`receipts@${DOMAIN_NAME}`],
             actions: [
                 new sesActions.S3({
                     bucket,
@@ -122,12 +114,20 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
             ],
         });
 
-        // Budget Alerts
-        const thresholds = [
-            { amount: 5, pct: 50 },
-            { amount: 8, pct: 80 },
-            { amount: 10, pct: 100 },
-        ];
+        // Budget Alerts via SNS
+        const budgetTopic = new sns.Topic(this, "BudgetAlertsTopic", {
+            topicName: "hsa-receipt-archiver-budget-alerts",
+        });
+
+        budgetTopic.addToResourcePolicy(
+            new iam.PolicyStatement({
+                actions: ["sns:Publish"],
+                principals: [new iam.ServicePrincipal("budgets.amazonaws.com")],
+                resources: [budgetTopic.topicArn],
+            }),
+        );
+
+        const budgetThresholdPercentages = [50, 80, 100];
 
         new budgets.CfnBudget(this, "MonthlyBudget", {
             budget: {
@@ -139,17 +139,17 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
                     unit: "USD",
                 },
             },
-            notificationsWithSubscribers: thresholds.map((t) => ({
+            notificationsWithSubscribers: budgetThresholdPercentages.map((pct) => ({
                 notification: {
                     notificationType: "ACTUAL",
                     comparisonOperator: "GREATER_THAN",
-                    threshold: t.pct,
+                    threshold: pct,
                     thresholdType: "PERCENTAGE",
                 },
                 subscribers: [
                     {
-                        subscriptionType: "EMAIL",
-                        address: notificationEmail,
+                        subscriptionType: "SNS",
+                        address: budgetTopic.topicArn,
                     },
                 ],
             })),
