@@ -51,10 +51,17 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
             code: lambda.Code.fromAsset("../lambda", {
                 bundling: {
                     image: lambda.Runtime.PYTHON_3_13.bundlingImage,
+                    user: "root",
                     command: [
                         "bash",
                         "-c",
-                        "pip install -r requirements.txt -t /asset-output && cp -r src/hsa_receipt_archiver /asset-output/",
+                        [
+                            "dnf install -y ghostscript",
+                            "pip install -r requirements.txt -t /asset-output",
+                            "cp -r src/hsa_receipt_archiver /asset-output/",
+                            "mkdir -p /asset-output/bin",
+                            "cp /usr/bin/gs /asset-output/bin/gs",
+                        ].join(" && "),
                     ],
                 },
             }),

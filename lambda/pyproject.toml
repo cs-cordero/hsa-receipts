@@ -9,7 +9,6 @@ requires-python = ">=3.13"
 dependencies = [
     "boto3",
     "anthropic",
-    "openpyxl",
     "Pillow",
 ]
 
