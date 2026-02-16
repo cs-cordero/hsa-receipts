@@ -67,7 +67,6 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
             }),
             memorySize: 1024,
             timeout: cdk.Duration.minutes(5),
-            reservedConcurrentExecutions: 2,
             logGroup,
             environment: {
                 BUCKET_NAME: bucket.bucketName,
