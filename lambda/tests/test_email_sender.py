@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from hsa_receipt_archiver.email_sender import send_confirmation, send_rejection_notice
+from hsa_receipt_archiver.email_sender import send_confirmation, send_error_notice, send_rejection_notice
 from hsa_receipt_archiver.ledger_manager import LedgerEntry
 
 
@@ -69,3 +69,19 @@ def test_send_rejection_notice_includes_force_store_instructions(mock_ses: Magic
     send_rejection_notice("from@example.com", "to@example.com", "Item", "Reason")
     body = mock_ses.send_email.call_args[1]["Message"]["Body"]["Text"]["Data"]
     assert "FORCE_STORE" in body
+
+
+@patch("hsa_receipt_archiver.email_sender.SES_CLIENT")
+def test_send_error_notice_calls_ses(mock_ses: MagicMock) -> None:
+    send_error_notice("from@example.com", "to@example.com", "Something broke")
+    mock_ses.send_email.assert_called_once()
+    call_kwargs = mock_ses.send_email.call_args[1]
+    assert call_kwargs["Source"] == "from@example.com"
+    assert call_kwargs["Destination"] == {"ToAddresses": ["to@example.com"]}
+
+
+@patch("hsa_receipt_archiver.email_sender.SES_CLIENT")
+def test_send_error_notice_includes_error_message(mock_ses: MagicMock) -> None:
+    send_error_notice("from@example.com", "to@example.com", "Failed to process attachment: receipt.pdf")
+    body = mock_ses.send_email.call_args[1]["Message"]["Body"]["Text"]["Data"]
+    assert "Failed to process attachment: receipt.pdf" in body

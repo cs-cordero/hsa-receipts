@@ -3,16 +3,18 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
 from anthropic.types import TextBlock
 
 from hsa_receipt_archiver.claude_client import check_hsa_eligibility
 
 
-def _make_response(items: list[dict[str, object]]) -> MagicMock:
+def _make_response(items: list[dict[str, object]] | None = None, text: str | None = None) -> MagicMock:
     """Build a mock Anthropic API response containing the given JSON items."""
     mock_response = MagicMock()
+    mock_response.stop_reason = "end_turn"
     text_block = MagicMock(spec=TextBlock)
-    text_block.text = json.dumps(items)
+    text_block.text = text if text is not None else json.dumps(items or [])
     mock_response.content = [text_block]
     return mock_response
 
@@ -150,3 +152,25 @@ def test_passes_api_key(mock_anthropic_cls: MagicMock) -> None:
 
     check_hsa_eligibility("my-secret-key", b"data", "image/jpeg")
     mock_anthropic_cls.assert_called_once_with(api_key="my-secret-key")
+
+
+@patch("hsa_receipt_archiver.claude_client.anthropic.Anthropic")
+def test_empty_response_raises_value_error(mock_anthropic_cls: MagicMock) -> None:
+    mock_client = MagicMock()
+    mock_anthropic_cls.return_value = mock_client
+    mock_client.messages.create.return_value = _make_response(text="")
+
+    with pytest.raises(ValueError, match="empty response"):
+        check_hsa_eligibility("api-key", b"data", "image/jpeg")
+
+
+@patch("hsa_receipt_archiver.claude_client.anthropic.Anthropic")
+def test_markdown_fenced_json_is_parsed(mock_anthropic_cls: MagicMock) -> None:
+    mock_client = MagicMock()
+    mock_anthropic_cls.return_value = mock_client
+    fenced = "```json\n" + json.dumps([_single_eligible_item()]) + "\n```"
+    mock_client.messages.create.return_value = _make_response(text=fenced)
+
+    results = check_hsa_eligibility("api-key", b"data", "image/jpeg")
+    assert len(results) == 1
+    assert results[0].is_eligible is True

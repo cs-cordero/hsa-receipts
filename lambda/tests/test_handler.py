@@ -292,3 +292,29 @@ def test_today_returns_utc_date() -> None:
 
     result = _today()
     assert result == datetime.now(tz=UTC).date()
+
+
+@patch.dict(os.environ, ENV_VARS)
+@patch("hsa_receipt_archiver.handler.tag_raw_email")
+@patch("hsa_receipt_archiver.handler.send_error_notice")
+@patch("hsa_receipt_archiver.handler.check_hsa_eligibility", side_effect=RuntimeError("API failed"))
+@patch("hsa_receipt_archiver.handler.parse_ses_email")
+@patch("hsa_receipt_archiver.handler.fetch_raw_email", return_value=b"raw")
+@patch("hsa_receipt_archiver.handler._get_ssm_param")
+def test_attachment_error_sends_error_notice(
+    mock_ssm: MagicMock,
+    mock_fetch: MagicMock,
+    mock_parse: MagicMock,
+    mock_check: MagicMock,
+    mock_error_notice: MagicMock,
+    mock_tag: MagicMock,
+) -> None:
+    mock_ssm.side_effect = lambda name: {"/test/api-key": "key", "/test/senders": "allowed@example.com"}[name]
+    mock_parse.return_value = _make_parsed_email()
+
+    from hsa_receipt_archiver.handler import _handle
+
+    result = _handle(_make_ses_event())
+    assert result["statusCode"] == 200
+    mock_error_notice.assert_called_once()
+    mock_tag.assert_called_once()
