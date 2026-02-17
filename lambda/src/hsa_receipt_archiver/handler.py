@@ -10,8 +10,8 @@ import boto3
 
 from hsa_receipt_archiver.claude_client import check_hsa_eligibility
 from hsa_receipt_archiver.email_parser import Attachment, parse_ses_email
-from hsa_receipt_archiver.email_sender import send_confirmation, send_error_notice, send_rejection_notice
 from hsa_receipt_archiver.ledger_manager import LedgerEntry, add_ledger_entry
+from hsa_receipt_archiver.notifier import notify_failure, notify_rejection, notify_success
 from hsa_receipt_archiver.pdf_converter import convert_to_pdfa
 from hsa_receipt_archiver.s3_manager import (
     fetch_ledger,
@@ -25,12 +25,10 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 BUCKET_NAME = os.environ["BUCKET_NAME"]
-DOMAIN_NAME = os.environ["DOMAIN_NAME"]
 SSM_API_KEY_PARAM = os.environ["SSM_API_KEY_PARAM"]
 SSM_ALLOWED_SENDERS_PARAM = os.environ["SSM_ALLOWED_SENDERS_PARAM"]
 
 FORCE_STORE_PREFIX = "FORCE_STORE"
-FROM_ADDRESS = f"receipts@{DOMAIN_NAME}"
 
 _ssm_cache: dict[str, str] = {}
 _ssm_client = boto3.client("ssm")
@@ -90,22 +88,22 @@ def _handle(event: dict[str, Any]) -> dict[str, Any]:
             len(attachment.data),
         )
         try:
-            _process_attachment(attachment, force_store, api_key, sender_email)
+            _process_attachment(attachment, force_store, api_key)
         except Exception:
             logger.exception("Failed to process attachment %s", attachment.filename)
-            send_error_notice(FROM_ADDRESS, sender_email, f"Failed to process attachment: {attachment.filename}")
+            notify_failure(f"Failed to process attachment: {attachment.filename}")
 
     tag_raw_email(BUCKET_NAME, raw_email_key)
     return {"statusCode": 200, "body": "Processed"}
 
 
-def _process_attachment(attachment: "Attachment", force_store: bool, api_key: str, sender_email: str) -> None:
+def _process_attachment(attachment: "Attachment", force_store: bool, api_key: str) -> None:
     results = check_hsa_eligibility(api_key, attachment.data, attachment.content_type)
 
     eligible_results = []
     for result in results:
         if not result.is_eligible and not force_store:
-            send_rejection_notice(FROM_ADDRESS, sender_email, result.description, result.reasoning)
+            notify_rejection(result.description, result.reasoning)
             logger.info("Rejected receipt: %s — %s", result.description, result.reasoning)
         else:
             eligible_results.append(result)
@@ -115,6 +113,7 @@ def _process_attachment(attachment: "Attachment", force_store: bool, api_key: st
 
     pdf_data = convert_to_pdfa(attachment.data, attachment.content_type)
     receipt_uri: str | None = None
+    entries: list[LedgerEntry] = []
 
     for result in eligible_results:
         service_date = _parse_date(result.service_date)
@@ -141,9 +140,11 @@ def _process_attachment(attachment: "Attachment", force_store: bool, api_key: st
         ledger_csv = fetch_ledger(BUCKET_NAME)
         updated_ledger = add_ledger_entry(ledger_csv, entry)
         store_ledger(BUCKET_NAME, updated_ledger)
+        entries.append(entry)
 
-        send_confirmation(FROM_ADDRESS, sender_email, entry)
         logger.info("Archived receipt: %s at %s", result.description, receipt_uri)
+
+    notify_success(entries)
 
 
 def _today() -> date:

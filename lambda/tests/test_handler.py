@@ -10,7 +10,6 @@ from hsa_receipt_archiver.ledger_manager import LedgerEntry
 
 ENV_VARS = {
     "BUCKET_NAME": "test-bucket",
-    "DOMAIN_NAME": "example.com",
     "SSM_API_KEY_PARAM": "/test/api-key",
     "SSM_ALLOWED_SENDERS_PARAM": "/test/senders",
 }
@@ -48,7 +47,7 @@ def _make_parsed_email(
 
 @patch.dict(os.environ, ENV_VARS)
 @patch("hsa_receipt_archiver.handler.tag_raw_email")
-@patch("hsa_receipt_archiver.handler.send_confirmation")
+@patch("hsa_receipt_archiver.handler.notify_success")
 @patch("hsa_receipt_archiver.handler.store_ledger")
 @patch("hsa_receipt_archiver.handler.fetch_ledger", return_value=None)
 @patch("hsa_receipt_archiver.handler.store_receipt", return_value="s3://test-bucket/receipts/2025/receipt.pdf")
@@ -66,7 +65,7 @@ def test_happy_path(
     mock_store_receipt: MagicMock,
     mock_fetch_ledger: MagicMock,
     mock_store_ledger: MagicMock,
-    mock_send_conf: MagicMock,
+    mock_notify_success: MagicMock,
     mock_tag: MagicMock,
 ) -> None:
     mock_ssm.side_effect = lambda name: {"/test/api-key": "key", "/test/senders": "allowed@example.com"}[name]
@@ -82,7 +81,10 @@ def test_happy_path(
     mock_convert.assert_called_once()
     mock_store_receipt.assert_called_once()
     mock_store_ledger.assert_called_once()
-    mock_send_conf.assert_called_once()
+    mock_notify_success.assert_called_once()
+    entries = mock_notify_success.call_args[0][0]
+    assert len(entries) == 1
+    assert isinstance(entries[0], LedgerEntry)
     mock_tag.assert_called_once()
 
 
@@ -138,7 +140,7 @@ def test_no_attachments_returns_400(
 
 @patch.dict(os.environ, ENV_VARS)
 @patch("hsa_receipt_archiver.handler.tag_raw_email")
-@patch("hsa_receipt_archiver.handler.send_rejection_notice")
+@patch("hsa_receipt_archiver.handler.notify_rejection")
 @patch("hsa_receipt_archiver.handler.check_hsa_eligibility")
 @patch("hsa_receipt_archiver.handler.parse_ses_email")
 @patch("hsa_receipt_archiver.handler.fetch_raw_email", return_value=b"raw")
@@ -164,7 +166,7 @@ def test_ineligible_sends_rejection(
 
 @patch.dict(os.environ, ENV_VARS)
 @patch("hsa_receipt_archiver.handler.tag_raw_email")
-@patch("hsa_receipt_archiver.handler.send_confirmation")
+@patch("hsa_receipt_archiver.handler.notify_success")
 @patch("hsa_receipt_archiver.handler.store_ledger")
 @patch("hsa_receipt_archiver.handler.fetch_ledger", return_value=None)
 @patch("hsa_receipt_archiver.handler.store_receipt", return_value="s3://b/r.pdf")
@@ -182,7 +184,7 @@ def test_force_store_bypasses_eligibility(
     mock_store_receipt: MagicMock,
     mock_fetch_ledger: MagicMock,
     mock_store_ledger: MagicMock,
-    mock_send_conf: MagicMock,
+    mock_notify_success: MagicMock,
     mock_tag: MagicMock,
 ) -> None:
     mock_ssm.side_effect = lambda name: {"/test/api-key": "key", "/test/senders": "allowed@example.com"}[name]
@@ -194,12 +196,12 @@ def test_force_store_bypasses_eligibility(
     result = _handle(_make_ses_event())
     assert result["statusCode"] == 200
     mock_store_receipt.assert_called_once()
-    mock_send_conf.assert_called_once()
+    mock_notify_success.assert_called_once()
 
 
 @patch.dict(os.environ, ENV_VARS)
 @patch("hsa_receipt_archiver.handler.tag_raw_email")
-@patch("hsa_receipt_archiver.handler.send_confirmation")
+@patch("hsa_receipt_archiver.handler.notify_success")
 @patch("hsa_receipt_archiver.handler.store_ledger")
 @patch("hsa_receipt_archiver.handler.fetch_ledger", return_value=None)
 @patch("hsa_receipt_archiver.handler.store_receipt", return_value="s3://b/r.pdf")
@@ -217,7 +219,7 @@ def test_multiple_results_share_pdf_uri(
     mock_store_receipt: MagicMock,
     mock_fetch_ledger: MagicMock,
     mock_store_ledger: MagicMock,
-    mock_send_conf: MagicMock,
+    mock_notify_success: MagicMock,
     mock_tag: MagicMock,
 ) -> None:
     mock_ssm.side_effect = lambda name: {"/test/api-key": "key", "/test/senders": "allowed@example.com"}[name]
@@ -232,13 +234,14 @@ def test_multiple_results_share_pdf_uri(
     _handle(_make_ses_event())
 
     mock_store_receipt.assert_called_once()
-    assert mock_send_conf.call_count == 2
     assert mock_store_ledger.call_count == 2
+    entries = mock_notify_success.call_args[0][0]
+    assert len(entries) == 2
 
 
 @patch.dict(os.environ, ENV_VARS)
 @patch("hsa_receipt_archiver.handler.tag_raw_email")
-@patch("hsa_receipt_archiver.handler.send_confirmation")
+@patch("hsa_receipt_archiver.handler.notify_success")
 @patch("hsa_receipt_archiver.handler.store_ledger")
 @patch("hsa_receipt_archiver.handler.fetch_ledger", return_value=None)
 @patch("hsa_receipt_archiver.handler.store_receipt", return_value="s3://b/r.pdf")
@@ -256,7 +259,7 @@ def test_both_dates_none_with_force_store_uses_today(
     mock_store_receipt: MagicMock,
     mock_fetch_ledger: MagicMock,
     mock_store_ledger: MagicMock,
-    mock_send_conf: MagicMock,
+    mock_notify_success: MagicMock,
     mock_tag: MagicMock,
 ) -> None:
     mock_ssm.side_effect = lambda name: {"/test/api-key": "key", "/test/senders": "allowed@example.com"}[name]
@@ -269,9 +272,9 @@ def test_both_dates_none_with_force_store_uses_today(
 
     _handle(_make_ses_event())
 
-    entry_arg = mock_send_conf.call_args[0][2]
-    assert isinstance(entry_arg, LedgerEntry)
-    assert entry_arg.payment_date == datetime.now(tz=UTC).date()
+    entries = mock_notify_success.call_args[0][0]
+    assert len(entries) == 1
+    assert entries[0].payment_date == datetime.now(tz=UTC).date()
 
 
 def test_parse_date_valid_string() -> None:
@@ -296,17 +299,17 @@ def test_today_returns_utc_date() -> None:
 
 @patch.dict(os.environ, ENV_VARS)
 @patch("hsa_receipt_archiver.handler.tag_raw_email")
-@patch("hsa_receipt_archiver.handler.send_error_notice")
+@patch("hsa_receipt_archiver.handler.notify_failure")
 @patch("hsa_receipt_archiver.handler.check_hsa_eligibility", side_effect=RuntimeError("API failed"))
 @patch("hsa_receipt_archiver.handler.parse_ses_email")
 @patch("hsa_receipt_archiver.handler.fetch_raw_email", return_value=b"raw")
 @patch("hsa_receipt_archiver.handler._get_ssm_param")
-def test_attachment_error_sends_error_notice(
+def test_attachment_error_sends_failure_notification(
     mock_ssm: MagicMock,
     mock_fetch: MagicMock,
     mock_parse: MagicMock,
     mock_check: MagicMock,
-    mock_error_notice: MagicMock,
+    mock_notify_failure: MagicMock,
     mock_tag: MagicMock,
 ) -> None:
     mock_ssm.side_effect = lambda name: {"/test/api-key": "key", "/test/senders": "allowed@example.com"}[name]
@@ -316,5 +319,5 @@ def test_attachment_error_sends_error_notice(
 
     result = _handle(_make_ses_event())
     assert result["statusCode"] == 200
-    mock_error_notice.assert_called_once()
+    mock_notify_failure.assert_called_once()
     mock_tag.assert_called_once()

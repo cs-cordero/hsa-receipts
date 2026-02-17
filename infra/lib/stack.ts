@@ -43,6 +43,11 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
             removalPolicy: cdk.RemovalPolicy.DESTROY,
         });
 
+        // SNS Notification Topic
+        const notificationTopic = new sns.Topic(this, "NotificationTopic", {
+            topicName: "hsa-receipt-archiver-notifications",
+        });
+
         // Lambda Function
         const handler = new lambda.Function(this, "ReceiptArchiver", {
             functionName: "hsa-receipt-archiver",
@@ -72,7 +77,7 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
             logGroup,
             environment: {
                 BUCKET_NAME: bucket.bucketName,
-                DOMAIN_NAME,
+                SNS_TOPIC_ARN: notificationTopic.topicArn,
                 SSM_API_KEY_PARAM: "/hsa-receipt-archiver/anthropic-api-key",
                 SSM_ALLOWED_SENDERS_PARAM: "/hsa-receipt-archiver/allowed-senders",
                 LD_LIBRARY_PATH: "/var/task/lib",
@@ -99,12 +104,7 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
             }),
         );
 
-        handler.addToRolePolicy(
-            new iam.PolicyStatement({
-                actions: ["ses:SendEmail", "ses:SendRawEmail"],
-                resources: ["*"],
-            }),
-        );
+        notificationTopic.grantPublish(handler);
 
         // SES Receipt Rule Set + Rule
         const ruleSet = new ses.ReceiptRuleSet(this, "ReceiptRuleSet", {
