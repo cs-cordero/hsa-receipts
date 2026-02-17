@@ -32,6 +32,9 @@ uv.lock
 .env
 .env.*
 
+# Debug
+debug_local.py
+
 # OS
 .DS_Store
 Thumbs.db

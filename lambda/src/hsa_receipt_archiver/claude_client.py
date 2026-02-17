@@ -93,6 +93,8 @@ def check_hsa_eligibility(api_key: str, attachment_data: bytes, content_type: st
         " Extract each out-of-pocket transaction separately.",
     )
 
+    logger.info("Calling Claude API: content_type=%s, data_size=%d bytes", content_type, len(attachment_data))
+
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=4096,
@@ -100,12 +102,29 @@ def check_hsa_eligibility(api_key: str, attachment_data: bytes, content_type: st
         messages=[{"role": "user", "content": [content_block, prompt]}],
     )
 
-    first_block = response.content[0]
-    assert isinstance(first_block, TextBlock)
-    response_text = first_block.text
+    logger.info("Claude API returned: stop_reason=%s, content_blocks=%d", response.stop_reason, len(response.content))
+
+    response_text = ""
+    for block in response.content:
+        if isinstance(block, TextBlock):
+            response_text = block.text
+            break
+
     logger.info("Claude response: %s", response_text)
 
-    items: list[dict[str, object]] = json.loads(response_text)
+    if not response_text.strip():
+        logger.error("Claude returned empty response. Stop reason: %s", response.stop_reason)
+        raise ValueError("Claude returned an empty response")
+
+    # Strip markdown code fences if present
+    stripped = response_text.strip()
+    if stripped.startswith("```"):
+        lines = stripped.split("\n")
+        # Remove first line (```json) and last line (```)
+        lines = [line for line in lines[1:] if line.strip() != "```"]
+        stripped = "\n".join(lines)
+
+    items: list[dict[str, object]] = json.loads(stripped)
 
     results: list[EligibilityResult] = []
     for item in items:

@@ -59,8 +59,10 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
                             "dnf install -y ghostscript",
                             "pip install -r requirements.txt -t /asset-output",
                             "cp -r src/hsa_receipt_archiver /asset-output/",
-                            "mkdir -p /asset-output/bin",
+                            "mkdir -p /asset-output/bin /asset-output/lib",
                             "cp /usr/bin/gs /asset-output/bin/gs",
+                            "ldd /usr/bin/gs | awk '/=>/ {print $3}' | xargs -I{} cp {} /asset-output/lib/",
+                            "cp -rL /usr/share/ghostscript /asset-output/share/",
                         ].join(" && "),
                     ],
                 },
@@ -73,6 +75,8 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
                 DOMAIN_NAME,
                 SSM_API_KEY_PARAM: "/hsa-receipt-archiver/anthropic-api-key",
                 SSM_ALLOWED_SENDERS_PARAM: "/hsa-receipt-archiver/allowed-senders",
+                LD_LIBRARY_PATH: "/var/task/lib",
+                GS_LIB: "/var/task/share/Resource/Init:/var/task/share/lib",
             },
         });
 

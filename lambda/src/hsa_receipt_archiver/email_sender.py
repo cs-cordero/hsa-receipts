@@ -35,6 +35,27 @@ def send_confirmation(from_address: str, recipient: str, entry: LedgerEntry) -> 
     )
 
 
+def send_error_notice(from_address: str, recipient: str, error_message: str) -> None:
+    """Send an email notifying the sender that processing failed."""
+    SES_CLIENT.send_email(
+        Source=from_address,
+        Destination={"ToAddresses": [recipient]},
+        Message={
+            "Subject": {"Data": "HSA Receipt Processing Failed"},
+            "Body": {
+                "Text": {
+                    "Data": (
+                        "An error occurred while processing your receipt.\n\n"
+                        f"Error: {error_message}\n\n"
+                        "Please try re-sending the email. If the problem persists, "
+                        "check that the attachment is a supported image (JPEG, PNG, GIF, WebP) or PDF."
+                    ),
+                },
+            },
+        },
+    )
+
+
 def send_rejection_notice(from_address: str, recipient: str, description: str, reasoning: str) -> None:
     """Send an email explaining why a receipt was rejected, with FORCE_STORE instructions."""
     SES_CLIENT.send_email(

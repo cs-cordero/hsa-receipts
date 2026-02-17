@@ -1,12 +1,13 @@
 """Convert receipt images and PDFs to PDF/A format for archival."""
 
+import os
 import subprocess
 import tempfile
 from pathlib import Path
 
 from PIL import Image
 
-GS_BINARY = "/var/task/bin/gs"
+GS_BINARY = os.environ.get("GS_BINARY", "/var/task/bin/gs")
 
 _CONTENT_TYPE_SUFFIX = {
     "image/jpeg": ".jpg",
@@ -38,20 +39,24 @@ def convert_to_pdfa(data: bytes, content_type: str) -> bytes:
 
         output_pdf = tmp / "output.pdf"
 
-        subprocess.run(
+        result = subprocess.run(
             [
                 GS_BINARY,
                 "-dPDFA=2",
                 "-dBATCH",
                 "-dNOPAUSE",
-                "-dQUIET",
                 "-sColorConversionStrategy=UseDeviceIndependentColor",
                 "-sDEVICE=pdfwrite",
                 f"-sOutputFile={output_pdf}",
                 str(input_pdf),
             ],
-            check=True,
             capture_output=True,
         )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Ghostscript failed (exit {result.returncode}):\n"
+                f"stdout: {result.stdout.decode(errors='replace')}\n"
+                f"stderr: {result.stderr.decode(errors='replace')}"
+            )
 
         return output_pdf.read_bytes()
