@@ -4,7 +4,13 @@ import csv
 import io
 from datetime import date
 
-from hsa_receipt_archiver.ledger_manager import HEADERS, LedgerEntry, add_ledger_entry, create_empty_ledger
+from hsa_receipt_archiver.ledger_manager import (
+    HEADERS,
+    LedgerEntry,
+    _duplicate_score,
+    add_ledger_entry,
+    create_empty_ledger,
+)
 
 
 def test_create_empty_ledger_has_headers() -> None:
@@ -121,3 +127,150 @@ def test_add_multiple_entries() -> None:
     assert len(rows) == 3
     assert rows[1][4] == "First"
     assert rows[2][4] == "Second"
+
+
+def test_duplicate_score_exact_match() -> None:
+    entry = LedgerEntry(
+        service_date=date(2025, 1, 15),
+        payment_date=None,
+        provider="Dr Smith",
+        category="Medical",
+        description="Office visit",
+        amount=30.00,
+        receipt_s3_uri="s3://b/r.pdf",
+    )
+    ledger = add_ledger_entry(None, entry)
+
+    same_entry = LedgerEntry(
+        service_date=date(2025, 1, 15),
+        payment_date=None,
+        provider="Dr Smith",
+        category="Medical",
+        description="Office visit copay",
+        amount=30.00,
+        receipt_s3_uri="s3://b/r2.pdf",
+    )
+    assert _duplicate_score(ledger, same_entry) == 100
+
+
+def test_duplicate_score_same_provider_and_amount_different_date() -> None:
+    entry = LedgerEntry(
+        service_date=date(2025, 1, 15),
+        payment_date=None,
+        provider="Dr Smith",
+        category="Medical",
+        description="Visit",
+        amount=30.00,
+        receipt_s3_uri="s3://b/r.pdf",
+    )
+    ledger = add_ledger_entry(None, entry)
+
+    different_date = LedgerEntry(
+        service_date=date(2025, 6, 15),
+        payment_date=None,
+        provider="Dr Smith",
+        category="Medical",
+        description="Visit",
+        amount=30.00,
+        receipt_s3_uri="s3://b/r2.pdf",
+    )
+    assert _duplicate_score(ledger, different_date) == 60
+
+
+def test_duplicate_score_nearby_date() -> None:
+    entry = LedgerEntry(
+        service_date=date(2025, 1, 15),
+        payment_date=None,
+        provider="Dr Smith",
+        category="Medical",
+        description="Visit",
+        amount=30.00,
+        receipt_s3_uri="s3://b/r.pdf",
+    )
+    ledger = add_ledger_entry(None, entry)
+
+    nearby = LedgerEntry(
+        service_date=date(2025, 1, 20),
+        payment_date=None,
+        provider="Dr Smith",
+        category="Medical",
+        description="Visit",
+        amount=30.00,
+        receipt_s3_uri="s3://b/r2.pdf",
+    )
+    assert _duplicate_score(ledger, nearby) == 80
+
+
+def test_duplicate_score_no_match() -> None:
+    entry = LedgerEntry(
+        service_date=date(2025, 1, 15),
+        payment_date=None,
+        provider="Dr Smith",
+        category="Medical",
+        description="Visit",
+        amount=30.00,
+        receipt_s3_uri="s3://b/r.pdf",
+    )
+    ledger = add_ledger_entry(None, entry)
+
+    different = LedgerEntry(
+        service_date=date(2025, 6, 15),
+        payment_date=None,
+        provider="CVS Pharmacy",
+        category="Pharmacy",
+        description="Tylenol",
+        amount=12.99,
+        receipt_s3_uri="s3://b/r2.pdf",
+    )
+    assert _duplicate_score(ledger, different) == 0
+
+
+def test_duplicate_score_empty_ledger() -> None:
+    ledger = create_empty_ledger()
+    entry = LedgerEntry(
+        service_date=date(2025, 1, 15),
+        payment_date=None,
+        provider="Dr Smith",
+        category="Medical",
+        description="Visit",
+        amount=30.00,
+        receipt_s3_uri="s3://b/r.pdf",
+    )
+    assert _duplicate_score(ledger, entry) == 0
+
+
+def test_duplicate_pct_column_written() -> None:
+    entry = LedgerEntry(
+        service_date=date(2025, 1, 15),
+        payment_date=None,
+        provider="Dr Smith",
+        category="Medical",
+        description="Visit",
+        amount=30.00,
+        receipt_s3_uri="s3://b/r.pdf",
+    )
+    ledger = add_ledger_entry(None, entry)
+    # Add same entry again — should have a dupe score
+    ledger = add_ledger_entry(ledger, entry)
+
+    reader = csv.reader(io.StringIO(ledger))
+    rows = list(reader)
+    assert rows[1][9] == ""  # first entry, no dupe
+    assert rows[2][9] == "100"  # second entry, exact dupe
+
+
+def test_duplicate_pct_column_empty_when_zero() -> None:
+    entry = LedgerEntry(
+        service_date=date(2025, 1, 15),
+        payment_date=None,
+        provider="Dr Smith",
+        category="Medical",
+        description="Visit",
+        amount=30.00,
+        receipt_s3_uri="s3://b/r.pdf",
+    )
+    ledger = add_ledger_entry(None, entry)
+
+    reader = csv.reader(io.StringIO(ledger))
+    rows = list(reader)
+    assert rows[1][9] == ""
