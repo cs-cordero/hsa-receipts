@@ -60,3 +60,61 @@ def convert_to_pdfa(data: bytes, content_type: str) -> bytes:
             )
 
         return output_pdf.read_bytes()
+
+
+def get_page_count(pdf_data: bytes) -> int:
+    """Return the number of pages in a PDF using Ghostscript."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp = Path(tmp_dir)
+        input_pdf = tmp / "input.pdf"
+        input_pdf.write_bytes(pdf_data)
+
+        result = subprocess.run(
+            [
+                GS_BINARY,
+                "-q",
+                "-dNODISPLAY",
+                "-dNOSAFER",
+                f"--permit-file-read={tmp_dir}/",
+                "-c",
+                f"({input_pdf}) (r) file runpdfbegin pdfpagecount = quit",
+            ],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Ghostscript page count failed (exit {result.returncode}):\n"
+                f"stderr: {result.stderr.decode(errors='replace')}"
+            )
+
+        return int(result.stdout.decode().strip())
+
+
+def extract_page(pdf_data: bytes, page_num: int) -> bytes:
+    """Extract a single page from a PDF using Ghostscript."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp = Path(tmp_dir)
+        input_pdf = tmp / "input.pdf"
+        input_pdf.write_bytes(pdf_data)
+        output_pdf = tmp / "output.pdf"
+
+        result = subprocess.run(
+            [
+                GS_BINARY,
+                "-dNOPAUSE",
+                "-dBATCH",
+                f"-dFirstPage={page_num}",
+                f"-dLastPage={page_num}",
+                "-sDEVICE=pdfwrite",
+                f"-sOutputFile={output_pdf}",
+                str(input_pdf),
+            ],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Ghostscript page extraction failed (exit {result.returncode}):\n"
+                f"stderr: {result.stderr.decode(errors='replace')}"
+            )
+
+        return output_pdf.read_bytes()

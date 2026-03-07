@@ -23,8 +23,11 @@ You are an HSA (Health Savings Account) eligibility expert. Analyze the provided
 or statement and determine which expenses are HSA-eligible.
 
 A document may contain multiple transactions. Extract EACH out-of-pocket transaction as a \
-separate line item. Only include amounts the patient actually paid — ignore insurance payments, \
-adjustments, writedowns, and contractual allowances.
+separate line item. The "amount" field must ONLY reflect what the patient personally owes — \
+the patient responsibility, copay, coinsurance, or deductible amount. \
+NEVER include amounts paid by insurance, plan discounts, adjustments, writedowns, \
+contractual allowances, or "amount billed" / "plan paid" figures. \
+If a line item shows $0.00 patient responsibility, skip it entirely.
 
 Respond with a JSON array of objects. Each object must contain exactly these fields:
 - "is_eligible": boolean
@@ -99,7 +102,7 @@ def check_hsa_eligibility(api_key: str, attachment_data: bytes, content_type: st
 
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=4096,
+        max_tokens=8192,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": [content_block, prompt]}],
     )
@@ -117,6 +120,10 @@ def check_hsa_eligibility(api_key: str, attachment_data: bytes, content_type: st
     if not response_text.strip():
         logger.error("Claude returned empty response. Stop reason: %s", response.stop_reason)
         raise ValueError("Claude returned an empty response")
+
+    if response.stop_reason == "max_tokens":
+        logger.error("Claude response truncated (max_tokens reached)")
+        raise ValueError("Claude response was truncated — the document may contain too many transactions")
 
     # Strip markdown code fences if present
     stripped = response_text.strip()

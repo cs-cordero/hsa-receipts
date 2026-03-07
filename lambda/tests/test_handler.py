@@ -15,8 +15,26 @@ ENV_VARS = {
 }
 
 
-def _make_ses_event(message_id: str = "msg-123") -> dict:
-    return {"Records": [{"ses": {"mail": {"messageId": message_id}}}]}
+def _make_ses_event(
+    message_id: str = "msg-123",
+    spf: str = "PASS",
+    dkim: str = "PASS",
+    dmarc: str = "PASS",
+) -> dict:
+    return {
+        "Records": [
+            {
+                "ses": {
+                    "mail": {"messageId": message_id},
+                    "receipt": {
+                        "spfVerdict": {"status": spf},
+                        "dkimVerdict": {"status": dkim},
+                        "dmarcVerdict": {"status": dmarc},
+                    },
+                }
+            }
+        ]
+    }
 
 
 def _make_eligibility_result(**overrides: object) -> EligibilityResult:
@@ -39,11 +57,12 @@ def _make_eligibility_result(**overrides: object) -> EligibilityResult:
 def _make_parsed_email(
     sender: str = "allowed@example.com",
     subject: str = "Receipt",
+    body: str = "",
     attachments: list[Attachment] | None = None,
 ) -> ParsedEmail:
     if attachments is None:
         attachments = [Attachment("receipt.jpg", "image/jpeg", b"jpeg-data")]
-    return ParsedEmail(sender=sender, subject=subject, body="", attachments=attachments)
+    return ParsedEmail(sender=sender, subject=subject, body=body, attachments=attachments)
 
 
 @patch.dict(os.environ, ENV_VARS)
@@ -87,6 +106,33 @@ def test_happy_path(
     assert len(entries) == 1
     assert isinstance(entries[0], LedgerEntry)
     mock_tag.assert_called_once()
+
+
+@patch.dict(os.environ, ENV_VARS)
+def test_spf_fail_returns_403() -> None:
+    from hsa_receipt_archiver.handler import _handle
+
+    result = _handle(_make_ses_event(spf="FAIL"))
+    assert result["statusCode"] == 403
+    assert result["body"] == "Email authentication failed"
+
+
+@patch.dict(os.environ, ENV_VARS)
+def test_dkim_fail_returns_403() -> None:
+    from hsa_receipt_archiver.handler import _handle
+
+    result = _handle(_make_ses_event(dkim="FAIL"))
+    assert result["statusCode"] == 403
+    assert result["body"] == "Email authentication failed"
+
+
+@patch.dict(os.environ, ENV_VARS)
+def test_spf_gray_returns_403() -> None:
+    from hsa_receipt_archiver.handler import _handle
+
+    result = _handle(_make_ses_event(spf="GRAY"))
+    assert result["statusCode"] == 403
+    assert result["body"] == "Email authentication failed"
 
 
 @patch.dict(os.environ, ENV_VARS)
@@ -193,7 +239,7 @@ def test_force_store_bypasses_eligibility(
     mock_tag: MagicMock,
 ) -> None:
     mock_ssm.side_effect = lambda name: {"/test/api-key": "key", "/test/senders": "allowed@example.com"}[name]
-    mock_parse.return_value = _make_parsed_email(subject="FORCE_STORE this receipt")
+    mock_parse.return_value = _make_parsed_email(body="FORCE_STORE")
     mock_check.return_value = [_make_eligibility_result(is_eligible=False)]
 
     from hsa_receipt_archiver.handler import _handle
@@ -268,7 +314,7 @@ def test_both_dates_none_with_force_store_uses_today(
     mock_tag: MagicMock,
 ) -> None:
     mock_ssm.side_effect = lambda name: {"/test/api-key": "key", "/test/senders": "allowed@example.com"}[name]
-    mock_parse.return_value = _make_parsed_email(subject="FORCE_STORE")
+    mock_parse.return_value = _make_parsed_email(body="FORCE_STORE")
     mock_check.return_value = [
         _make_eligibility_result(is_eligible=False, service_date=None, payment_date=None),
     ]

@@ -60,8 +60,8 @@ def notify_rejection(filename: str, description: str, reasoning: str) -> None:
         f"Your receipt for {description} was determined to not be HSA-eligible.\n\n"
         f"Source file: {filename}\n"
         f"Reasoning: {reasoning}\n\n"
-        "If you believe this is incorrect, re-send the same email with the subject "
-        'line starting with "FORCE_STORE" to archive it regardless of eligibility.'
+        "If you believe this is incorrect, re-send the same email with "
+        '"FORCE_STORE" in the body to archive it regardless of eligibility.'
     )
     SNS_CLIENT.publish(TopicArn=TOPIC_ARN, Subject="HSA Receipt Not Eligible", Message=body)
 

@@ -8,11 +8,11 @@ from typing import Any
 
 import boto3
 
-from hsa_receipt_archiver.claude_client import check_hsa_eligibility
+from hsa_receipt_archiver.claude_client import EligibilityResult, check_hsa_eligibility
 from hsa_receipt_archiver.email_parser import Attachment, parse_ses_email
 from hsa_receipt_archiver.ledger_manager import LedgerEntry, add_ledger_entry
 from hsa_receipt_archiver.notifier import notify_detailed_failure, notify_failure, notify_rejection, notify_success
-from hsa_receipt_archiver.pdf_converter import convert_to_pdfa
+from hsa_receipt_archiver.pdf_converter import convert_to_pdfa, extract_page, get_page_count
 from hsa_receipt_archiver.s3_manager import (
     fetch_ledger,
     fetch_raw_email,
@@ -57,8 +57,15 @@ def _handle(event: dict[str, Any]) -> dict[str, Any]:
     mail = ses_record["mail"]
     message_id = mail["messageId"]
 
+    receipt = ses_record["receipt"]
     raw_email_key = f"raw-emails/{message_id}"
     logger.info("Processing email %s", message_id)
+
+    spf = receipt.get("spfVerdict", {}).get("status", "GRAY")
+    dkim = receipt.get("dkimVerdict", {}).get("status", "GRAY")
+    if spf != "PASS" or dkim != "PASS":
+        logger.warning("Email authentication failed: SPF=%s, DKIM=%s", spf, dkim)
+        return {"statusCode": 403, "body": "Email authentication failed"}
 
     raw_email = fetch_raw_email(BUCKET_NAME, raw_email_key)
     parsed = parse_ses_email(raw_email)
@@ -76,7 +83,7 @@ def _handle(event: dict[str, Any]) -> dict[str, Any]:
         logger.warning("No attachments found in email from %s", sender_email)
         return {"statusCode": 400, "body": "No attachments"}
 
-    force_store = parsed.subject.strip().upper().startswith(FORCE_STORE_PREFIX)
+    force_store = FORCE_STORE_PREFIX in parsed.body.upper()
     api_key = _get_ssm_param(SSM_API_KEY_PARAM)
 
     for i, attachment in enumerate(parsed.attachments):
@@ -99,8 +106,13 @@ def _handle(event: dict[str, Any]) -> dict[str, Any]:
     return {"statusCode": 200, "body": "Processed"}
 
 
+MAX_PAGES_PER_REQUEST = 2
+MAX_PAGES_ALLOWED = 10
+EARLIEST_ELIGIBLE_DATE = date(2025, 1, 27)
+
+
 def _process_attachment(attachment: "Attachment", force_store: bool, api_key: str) -> None:
-    results = check_hsa_eligibility(api_key, attachment.data, attachment.content_type)
+    results = _analyze_receipt(api_key, attachment.data, attachment.content_type)
 
     eligible_results = []
     for result in results:
@@ -148,6 +160,30 @@ def _process_attachment(attachment: "Attachment", force_store: bool, api_key: st
         logger.info("Archived receipt: %s at %s", result.description, receipt_uri)
 
     notify_success(entries)
+
+
+def _analyze_receipt(api_key: str, data: bytes, content_type: str) -> list["EligibilityResult"]:
+    """Send a receipt to Claude for analysis, splitting multi-page PDFs if needed."""
+    if content_type != "application/pdf":
+        return check_hsa_eligibility(api_key, data, content_type)
+
+    page_count = get_page_count(data)
+    if page_count > MAX_PAGES_ALLOWED:
+        raise ValueError(
+            f"PDF has {page_count} pages (max {MAX_PAGES_ALLOWED}). "
+            "Split the document into smaller files and re-send."
+        )
+    if page_count <= MAX_PAGES_PER_REQUEST:
+        return check_hsa_eligibility(api_key, data, content_type)
+
+    logger.info("Splitting %d-page PDF into individual pages for analysis", page_count)
+    results: list[EligibilityResult] = []
+    for page_num in range(1, page_count + 1):
+        logger.info("Analyzing page %d/%d", page_num, page_count)
+        page_data = extract_page(data, page_num)
+        results.extend(check_hsa_eligibility(api_key, page_data, content_type))
+
+    return results
 
 
 def _today() -> date:
