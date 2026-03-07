@@ -38,6 +38,7 @@ Respond with a JSON array of objects. Each object must contain exactly these fie
 or null if not determinable
 - "payment_date": string in YYYY-MM-DD format for when the payment was made, \
 or null if not determinable
+- "patient": string (name of the patient the service was performed for) or null if not visible
 - "reasoning": string explaining your determination
 
 If the document contains only one transaction, still return a JSON array with one element.
@@ -58,6 +59,7 @@ class EligibilityResult:
     provider: str | None
     service_date: str | None
     payment_date: str | None
+    patient: str | None
     reasoning: str
 
 
@@ -132,6 +134,7 @@ def check_hsa_eligibility(api_key: str, attachment_data: bytes, content_type: st
         provider = item.get("provider")
         service_date = item.get("service_date")
         payment_date = item.get("payment_date")
+        patient = item.get("patient")
         is_eligible = item["is_eligible"]
         reasoning = str(item["reasoning"])
 
@@ -149,6 +152,7 @@ def check_hsa_eligibility(api_key: str, attachment_data: bytes, content_type: st
                 provider=str(provider) if provider is not None else None,
                 service_date=str(service_date) if service_date is not None else None,
                 payment_date=str(payment_date) if payment_date is not None else None,
+                patient=str(patient) if patient is not None else None,
                 reasoning=reasoning,
             )
         )

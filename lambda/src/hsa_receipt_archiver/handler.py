@@ -133,6 +133,7 @@ def _process_attachment(attachment: "Attachment", force_store: bool, api_key: st
             service_date=service_date,
             payment_date=payment_date,
             provider=result.provider or "Unknown",
+            patient=result.patient or "",
             category=result.category,
             description=result.description,
             amount=result.amount or 0.0,

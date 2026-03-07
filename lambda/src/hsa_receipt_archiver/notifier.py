@@ -22,14 +22,16 @@ def notify_success(entries: list[LedgerEntry]) -> None:
     for entry in entries:
         service_date = entry.service_date.isoformat() if entry.service_date else "N/A"
         payment_date = entry.payment_date.isoformat() if entry.payment_date else "N/A"
+        patient = entry.patient or "N/A"
         amount = f"${entry.amount:.2f}"
         rows.append(
-            f"  {service_date:<12}  {payment_date:<12}  {entry.provider:<20}  "
+            f"  {service_date:<12}  {payment_date:<12}  {entry.provider:<20}  {patient:<15}  "
             f"{entry.category:<10}  {entry.description:<30}  {amount}"
         )
 
     header = (
-        f"  {'Service Date':<12}  {'Payment Date':<12}  {'Provider':<20}  {'Category':<10}  {'Description':<30}  Amount"
+        f"  {'Service Date':<12}  {'Payment Date':<12}  {'Provider':<20}  {'Patient/For':<15}  "
+        f"{'Category':<10}  {'Description':<30}  Amount"
     )
     separator = "  " + "-" * (len(header) - 2)
     receipt_uri = entries[0].receipt_s3_uri if entries else ""

@@ -6,9 +6,11 @@ from dataclasses import dataclass
 from datetime import date
 
 HEADERS = [
+    "Id",
     "Service Date",
     "Payment Date",
     "Vendor/Provider",
+    "Patient/For",
     "Category",
     "Description",
     "Amount",
@@ -24,6 +26,7 @@ class LedgerEntry:
     service_date: date | None
     payment_date: date | None
     provider: str
+    patient: str
     category: str
     description: str
     amount: float
@@ -47,6 +50,7 @@ def add_ledger_entry(ledger_csv: str | None, entry: LedgerEntry) -> str:
         ledger_csv = create_empty_ledger()
 
     dupe_pct = _duplicate_score(ledger_csv, entry)
+    next_id = _next_id(ledger_csv)
 
     buf = io.StringIO()
     buf.write(ledger_csv)
@@ -56,9 +60,11 @@ def add_ledger_entry(ledger_csv: str | None, entry: LedgerEntry) -> str:
     writer = csv.writer(buf)
     writer.writerow(
         [
+            next_id,
             entry.service_date.isoformat() if entry.service_date else "",
             entry.payment_date.isoformat() if entry.payment_date else "",
             entry.provider,
+            entry.patient,
             entry.category,
             entry.description,
             f"{entry.amount:.2f}",
@@ -70,6 +76,18 @@ def add_ledger_entry(ledger_csv: str | None, entry: LedgerEntry) -> str:
     )
 
     return buf.getvalue()
+
+
+def _next_id(ledger_csv: str) -> int:
+    """Return the next Id value (max existing Id + 1, or 1 if no rows)."""
+    reader = csv.DictReader(io.StringIO(ledger_csv))
+    max_id = 0
+    for row in reader:
+        try:
+            max_id = max(max_id, int(row.get("Id", "0")))
+        except ValueError:
+            pass
+    return max_id + 1
 
 
 def _duplicate_score(ledger_csv: str, entry: LedgerEntry) -> int:

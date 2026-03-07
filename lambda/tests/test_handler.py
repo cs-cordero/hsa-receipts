@@ -29,6 +29,7 @@ def _make_eligibility_result(**overrides: object) -> EligibilityResult:
         "provider": "Dr Smith",
         "service_date": "2025-01-15",
         "payment_date": None,
+        "patient": "John Doe",
         "reasoning": "Eligible",
     }
     defaults.update(overrides)

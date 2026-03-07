@@ -52,6 +52,7 @@ def test_notify_success_none_dates_show_na(mock_sns: MagicMock) -> None:
         service_date=None,
         payment_date=None,
         provider="P",
+        patient="",
         category="Other",
         description="D",
         amount=10.00,

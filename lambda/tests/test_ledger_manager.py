@@ -41,8 +41,8 @@ def test_add_entry_appends_to_existing(sample_ledger_entry: LedgerEntry) -> None
     reader = csv.reader(io.StringIO(result))
     rows = list(reader)
     assert len(rows) == 2
-    assert rows[1][2] == "Test Provider"
-    assert rows[1][4] == "Office visit copay"
+    assert rows[1][3] == "Test Provider"
+    assert rows[1][6] == "Office visit copay"
 
 
 def test_add_entry_handles_missing_trailing_newline(sample_ledger_entry: LedgerEntry) -> None:
@@ -58,8 +58,8 @@ def test_add_entry_none_dates_become_empty_strings(ledger_entry_no_dates: Ledger
     reader = csv.reader(io.StringIO(result))
     rows = list(reader)
     data_row = rows[1]
-    assert data_row[0] == ""  # Service Date
-    assert data_row[1] == ""  # Payment Date
+    assert data_row[1] == ""  # Service Date
+    assert data_row[2] == ""  # Payment Date
 
 
 def test_add_entry_formats_dates_as_iso(sample_ledger_entry: LedgerEntry) -> None:
@@ -67,8 +67,8 @@ def test_add_entry_formats_dates_as_iso(sample_ledger_entry: LedgerEntry) -> Non
     reader = csv.reader(io.StringIO(result))
     rows = list(reader)
     data_row = rows[1]
-    assert data_row[0] == "2025-01-15"
-    assert data_row[1] == "2025-01-16"
+    assert data_row[1] == "2025-01-15"
+    assert data_row[2] == "2025-01-16"
 
 
 def test_add_entry_formats_amount_two_decimals() -> None:
@@ -76,6 +76,7 @@ def test_add_entry_formats_amount_two_decimals() -> None:
         service_date=date(2025, 3, 1),
         payment_date=None,
         provider="P",
+        patient="",
         category="Medical",
         description="D",
         amount=5.1,
@@ -84,21 +85,21 @@ def test_add_entry_formats_amount_two_decimals() -> None:
     result = add_ledger_entry(None, entry)
     reader = csv.reader(io.StringIO(result))
     rows = list(reader)
-    assert rows[1][5] == "5.10"
+    assert rows[1][7] == "5.10"
 
 
 def test_add_entry_reimbursed_always_no(sample_ledger_entry: LedgerEntry) -> None:
     result = add_ledger_entry(None, sample_ledger_entry)
     reader = csv.reader(io.StringIO(result))
     rows = list(reader)
-    assert rows[1][7] == "No"
+    assert rows[1][9] == "No"
 
 
 def test_add_entry_notes_always_empty(sample_ledger_entry: LedgerEntry) -> None:
     result = add_ledger_entry(None, sample_ledger_entry)
     reader = csv.reader(io.StringIO(result))
     rows = list(reader)
-    assert rows[1][8] == ""
+    assert rows[1][10] == ""
 
 
 def test_add_multiple_entries() -> None:
@@ -106,6 +107,7 @@ def test_add_multiple_entries() -> None:
         service_date=date(2025, 1, 1),
         payment_date=None,
         provider="A",
+        patient="",
         category="Medical",
         description="First",
         amount=10.00,
@@ -115,6 +117,7 @@ def test_add_multiple_entries() -> None:
         service_date=date(2025, 2, 1),
         payment_date=None,
         provider="B",
+        patient="",
         category="Dental",
         description="Second",
         amount=20.00,
@@ -125,8 +128,8 @@ def test_add_multiple_entries() -> None:
     reader = csv.reader(io.StringIO(ledger))
     rows = list(reader)
     assert len(rows) == 3
-    assert rows[1][4] == "First"
-    assert rows[2][4] == "Second"
+    assert rows[1][6] == "First"
+    assert rows[2][6] == "Second"
 
 
 def test_duplicate_score_exact_match() -> None:
@@ -134,6 +137,7 @@ def test_duplicate_score_exact_match() -> None:
         service_date=date(2025, 1, 15),
         payment_date=None,
         provider="Dr Smith",
+        patient="",
         category="Medical",
         description="Office visit",
         amount=30.00,
@@ -145,6 +149,7 @@ def test_duplicate_score_exact_match() -> None:
         service_date=date(2025, 1, 15),
         payment_date=None,
         provider="Dr Smith",
+        patient="",
         category="Medical",
         description="Office visit copay",
         amount=30.00,
@@ -158,6 +163,7 @@ def test_duplicate_score_same_provider_and_amount_different_date() -> None:
         service_date=date(2025, 1, 15),
         payment_date=None,
         provider="Dr Smith",
+        patient="",
         category="Medical",
         description="Visit",
         amount=30.00,
@@ -169,6 +175,7 @@ def test_duplicate_score_same_provider_and_amount_different_date() -> None:
         service_date=date(2025, 6, 15),
         payment_date=None,
         provider="Dr Smith",
+        patient="",
         category="Medical",
         description="Visit",
         amount=30.00,
@@ -182,6 +189,7 @@ def test_duplicate_score_nearby_date() -> None:
         service_date=date(2025, 1, 15),
         payment_date=None,
         provider="Dr Smith",
+        patient="",
         category="Medical",
         description="Visit",
         amount=30.00,
@@ -193,6 +201,7 @@ def test_duplicate_score_nearby_date() -> None:
         service_date=date(2025, 1, 20),
         payment_date=None,
         provider="Dr Smith",
+        patient="",
         category="Medical",
         description="Visit",
         amount=30.00,
@@ -206,6 +215,7 @@ def test_duplicate_score_no_match() -> None:
         service_date=date(2025, 1, 15),
         payment_date=None,
         provider="Dr Smith",
+        patient="",
         category="Medical",
         description="Visit",
         amount=30.00,
@@ -217,6 +227,7 @@ def test_duplicate_score_no_match() -> None:
         service_date=date(2025, 6, 15),
         payment_date=None,
         provider="CVS Pharmacy",
+        patient="",
         category="Pharmacy",
         description="Tylenol",
         amount=12.99,
@@ -231,6 +242,7 @@ def test_duplicate_score_empty_ledger() -> None:
         service_date=date(2025, 1, 15),
         payment_date=None,
         provider="Dr Smith",
+        patient="",
         category="Medical",
         description="Visit",
         amount=30.00,
@@ -244,6 +256,7 @@ def test_duplicate_pct_column_written() -> None:
         service_date=date(2025, 1, 15),
         payment_date=None,
         provider="Dr Smith",
+        patient="",
         category="Medical",
         description="Visit",
         amount=30.00,
@@ -255,8 +268,8 @@ def test_duplicate_pct_column_written() -> None:
 
     reader = csv.reader(io.StringIO(ledger))
     rows = list(reader)
-    assert rows[1][9] == ""  # first entry, no dupe
-    assert rows[2][9] == "100"  # second entry, exact dupe
+    assert rows[1][11] == ""  # first entry, no dupe
+    assert rows[2][11] == "100"  # second entry, exact dupe
 
 
 def test_duplicate_pct_column_empty_when_zero() -> None:
@@ -264,6 +277,7 @@ def test_duplicate_pct_column_empty_when_zero() -> None:
         service_date=date(2025, 1, 15),
         payment_date=None,
         provider="Dr Smith",
+        patient="",
         category="Medical",
         description="Visit",
         amount=30.00,
@@ -273,4 +287,4 @@ def test_duplicate_pct_column_empty_when_zero() -> None:
 
     reader = csv.reader(io.StringIO(ledger))
     rows = list(reader)
-    assert rows[1][9] == ""
+    assert rows[1][11] == ""
