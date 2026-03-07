@@ -74,17 +74,18 @@ def test_notify_failure_publishes_to_sns(mock_sns: MagicMock) -> None:
 
 @patch("hsa_receipt_archiver.notifier.SNS_CLIENT")
 def test_notify_rejection_publishes_to_sns(mock_sns: MagicMock) -> None:
-    notify_rejection("Gym membership", "Not HSA-eligible")
+    notify_rejection("receipt.pdf", "Gym membership", "Not HSA-eligible")
     mock_sns.publish.assert_called_once()
     call_kwargs = mock_sns.publish.call_args[1]
     assert call_kwargs["Subject"] == "HSA Receipt Not Eligible"
     assert "Gym membership" in call_kwargs["Message"]
     assert "Not HSA-eligible" in call_kwargs["Message"]
+    assert "receipt.pdf" in call_kwargs["Message"]
 
 
 @patch("hsa_receipt_archiver.notifier.SNS_CLIENT")
 def test_notify_rejection_includes_force_store_instructions(mock_sns: MagicMock) -> None:
-    notify_rejection("Item", "Reason")
+    notify_rejection("file.pdf", "Item", "Reason")
     message = mock_sns.publish.call_args[1]["Message"]
     assert "FORCE_STORE" in message
 

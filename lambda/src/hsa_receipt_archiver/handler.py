@@ -105,7 +105,7 @@ def _process_attachment(attachment: "Attachment", force_store: bool, api_key: st
     eligible_results = []
     for result in results:
         if not result.is_eligible and not force_store:
-            notify_rejection(result.description, result.reasoning)
+            notify_rejection(attachment.filename, result.description, result.reasoning)
             logger.info("Rejected receipt: %s — %s", result.description, result.reasoning)
         else:
             eligible_results.append(result)

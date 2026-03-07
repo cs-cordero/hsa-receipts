@@ -54,10 +54,11 @@ def notify_failure(message: str) -> None:
     SNS_CLIENT.publish(TopicArn=TOPIC_ARN, Subject="HSA Receipt Processing Failed", Message=body)
 
 
-def notify_rejection(description: str, reasoning: str) -> None:
+def notify_rejection(filename: str, description: str, reasoning: str) -> None:
     """Publish a rejection notification explaining why a receipt was not eligible."""
     body = (
         f"Your receipt for {description} was determined to not be HSA-eligible.\n\n"
+        f"Source file: {filename}\n"
         f"Reasoning: {reasoning}\n\n"
         "If you believe this is incorrect, re-send the same email with the subject "
         'line starting with "FORCE_STORE" to archive it regardless of eligibility.'
