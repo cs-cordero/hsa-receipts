@@ -1,6 +1,3 @@
-# /// script
-# dependencies = ["anthropic"]
-# ///
 """Dry run a receipt through Claude to see what it extracts, without storing anything."""
 
 import argparse
@@ -9,9 +6,6 @@ import json
 import mimetypes
 import sys
 from pathlib import Path
-
-# Add the Lambda source to the path so we can import the shared prompt.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lambda" / "src"))
 
 import anthropic
 

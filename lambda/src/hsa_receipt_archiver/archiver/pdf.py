@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PIL import Image
 
-GS_BINARY = os.environ.get("GS_BINARY", "/var/task/bin/gs")
+_GS_BINARY = os.environ.get("GS_BINARY", "/var/task/bin/gs")
 
 _CONTENT_TYPE_SUFFIX = {
     "image/jpeg": ".jpg",
@@ -41,7 +41,7 @@ def convert_to_pdfa(data: bytes, content_type: str) -> bytes:
 
         result = subprocess.run(
             [
-                GS_BINARY,
+                _GS_BINARY,
                 "-dPDFA=2",
                 "-dBATCH",
                 "-dNOPAUSE",
@@ -71,7 +71,7 @@ def get_page_count(pdf_data: bytes) -> int:
 
         result = subprocess.run(
             [
-                GS_BINARY,
+                _GS_BINARY,
                 "-q",
                 "-dNODISPLAY",
                 "-dNOSAFER",
@@ -100,7 +100,7 @@ def extract_page(pdf_data: bytes, page_num: int) -> bytes:
 
         result = subprocess.run(
             [
-                GS_BINARY,
+                _GS_BINARY,
                 "-dNOPAUSE",
                 "-dBATCH",
                 f"-dFirstPage={page_num}",

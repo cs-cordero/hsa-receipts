@@ -1,6 +1,3 @@
-# /// script
-# dependencies = ["boto3", "botocore[crt]"]
-# ///
 """Bulk upload receipt files through the deployed Lambda pipeline.
 
 Replicates what SES does: wraps each file in a MIME email, uploads to S3

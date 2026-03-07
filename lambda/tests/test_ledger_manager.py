@@ -1,11 +1,11 @@
-"""Tests for ledger_manager module."""
+"""Tests for ledger module."""
 
 import csv
 import io
 from datetime import date
 
-from hsa_receipt_archiver.ledger_manager import (
-    HEADERS,
+from hsa_receipt_archiver.archiver.ledger import (
+    _HEADERS,
     LedgerEntry,
     _duplicate_score,
     add_ledger_entry,
@@ -17,7 +17,7 @@ def test_create_empty_ledger_has_headers() -> None:
     ledger = create_empty_ledger()
     reader = csv.reader(io.StringIO(ledger))
     headers = next(reader)
-    assert headers == HEADERS
+    assert headers == _HEADERS
 
 
 def test_create_empty_ledger_has_no_data_rows() -> None:
@@ -32,7 +32,7 @@ def test_add_entry_to_none_creates_new_ledger(sample_ledger_entry: LedgerEntry) 
     reader = csv.reader(io.StringIO(result))
     rows = list(reader)
     assert len(rows) == 2
-    assert rows[0] == HEADERS
+    assert rows[0] == _HEADERS
 
 
 def test_add_entry_appends_to_existing(sample_ledger_entry: LedgerEntry) -> None:

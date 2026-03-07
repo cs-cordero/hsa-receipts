@@ -5,7 +5,7 @@ import io
 from dataclasses import dataclass
 from datetime import date
 
-HEADERS = [
+_HEADERS = [
     "Id",
     "Service Date",
     "Payment Date",
@@ -37,7 +37,7 @@ def create_empty_ledger() -> str:
     """Create a new empty CSV ledger with headers."""
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(HEADERS)
+    writer.writerow(_HEADERS)
     return buf.getvalue()
 
 

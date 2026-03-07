@@ -1,16 +1,16 @@
 """Publish notifications to SNS."""
 
-import os
 import traceback
 
 import boto3
 
-from hsa_receipt_archiver.ledger_manager import LedgerEntry
+from hsa_receipt_archiver.archiver.ledger import LedgerEntry
+from hsa_receipt_archiver.util import get_env_var
 
-SNS_CLIENT = boto3.client("sns")
+_SNS_CLIENT = boto3.client("sns")
 
-TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
-DETAILED_FAILURE_TOPIC_ARN = os.environ["SNS_DETAILED_FAILURE_TOPIC_ARN"]
+TOPIC_ARN = get_env_var("SNS_TOPIC_ARN")
+DETAILED_FAILURE_TOPIC_ARN = get_env_var("SNS_DETAILED_FAILURE_TOPIC_ARN")
 
 
 def notify_success(entries: list[LedgerEntry]) -> None:
@@ -40,7 +40,7 @@ def notify_success(entries: list[LedgerEntry]) -> None:
     if receipt_uri:
         message += f"\n\nReceipt: {receipt_uri}"
 
-    SNS_CLIENT.publish(TopicArn=TOPIC_ARN, Subject=subject, Message=message)
+    _SNS_CLIENT.publish(TopicArn=TOPIC_ARN, Subject=subject, Message=message)
 
 
 def notify_failure(message: str) -> None:
@@ -51,7 +51,7 @@ def notify_failure(message: str) -> None:
         "Please try re-sending the email. If the problem persists, "
         "check that the attachment is a supported image (JPEG, PNG, GIF, WebP) or PDF."
     )
-    SNS_CLIENT.publish(TopicArn=TOPIC_ARN, Subject="HSA Receipt Processing Failed", Message=body)
+    _SNS_CLIENT.publish(TopicArn=TOPIC_ARN, Subject="HSA Receipt Processing Failed", Message=body)
 
 
 def notify_rejection(filename: str, description: str, reasoning: str) -> None:
@@ -63,7 +63,7 @@ def notify_rejection(filename: str, description: str, reasoning: str) -> None:
         "If you believe this is incorrect, re-send the same email with "
         '"FORCE_STORE" in the body to archive it regardless of eligibility.'
     )
-    SNS_CLIENT.publish(TopicArn=TOPIC_ARN, Subject="HSA Receipt Not Eligible", Message=body)
+    _SNS_CLIENT.publish(TopicArn=TOPIC_ARN, Subject="HSA Receipt Not Eligible", Message=body)
 
 
 def notify_detailed_failure(message: str, exception: BaseException) -> None:
@@ -75,7 +75,7 @@ def notify_detailed_failure(message: str, exception: BaseException) -> None:
         f"Exception message: {exception}\n\n"
         f"Stack trace:\n{tb}"
     )
-    SNS_CLIENT.publish(
+    _SNS_CLIENT.publish(
         TopicArn=DETAILED_FAILURE_TOPIC_ARN,
         Subject="HSA Receipt Processing Failed (Detailed)",
         Message=body,

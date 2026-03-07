@@ -1,9 +1,9 @@
-"""Tests for notifier module."""
+"""Tests for SNS notifier module."""
 
 from unittest.mock import MagicMock, patch
 
-from hsa_receipt_archiver.ledger_manager import LedgerEntry
-from hsa_receipt_archiver.notifier import (
+from hsa_receipt_archiver.archiver.ledger import LedgerEntry
+from hsa_receipt_archiver.aws.sns import (
     DETAILED_FAILURE_TOPIC_ARN,
     notify_detailed_failure,
     notify_failure,
@@ -12,7 +12,7 @@ from hsa_receipt_archiver.notifier import (
 )
 
 
-@patch("hsa_receipt_archiver.notifier.SNS_CLIENT")
+@patch("hsa_receipt_archiver.aws.sns._SNS_CLIENT")
 def test_notify_success_publishes_to_sns(mock_sns: MagicMock, sample_ledger_entry: LedgerEntry) -> None:
     notify_success([sample_ledger_entry])
     mock_sns.publish.assert_called_once()
@@ -21,14 +21,14 @@ def test_notify_success_publishes_to_sns(mock_sns: MagicMock, sample_ledger_entr
     assert "1 item)" in call_kwargs["Subject"]
 
 
-@patch("hsa_receipt_archiver.notifier.SNS_CLIENT")
+@patch("hsa_receipt_archiver.aws.sns._SNS_CLIENT")
 def test_notify_success_plural_subject(mock_sns: MagicMock, sample_ledger_entry: LedgerEntry) -> None:
     notify_success([sample_ledger_entry, sample_ledger_entry])
     call_kwargs = mock_sns.publish.call_args[1]
     assert "2 items)" in call_kwargs["Subject"]
 
 
-@patch("hsa_receipt_archiver.notifier.SNS_CLIENT")
+@patch("hsa_receipt_archiver.aws.sns._SNS_CLIENT")
 def test_notify_success_includes_entry_details(mock_sns: MagicMock, sample_ledger_entry: LedgerEntry) -> None:
     notify_success([sample_ledger_entry])
     message = mock_sns.publish.call_args[1]["Message"]
@@ -39,14 +39,14 @@ def test_notify_success_includes_entry_details(mock_sns: MagicMock, sample_ledge
     assert "Office visit copay" in message
 
 
-@patch("hsa_receipt_archiver.notifier.SNS_CLIENT")
+@patch("hsa_receipt_archiver.aws.sns._SNS_CLIENT")
 def test_notify_success_includes_receipt_uri(mock_sns: MagicMock, sample_ledger_entry: LedgerEntry) -> None:
     notify_success([sample_ledger_entry])
     message = mock_sns.publish.call_args[1]["Message"]
     assert sample_ledger_entry.receipt_s3_uri in message
 
 
-@patch("hsa_receipt_archiver.notifier.SNS_CLIENT")
+@patch("hsa_receipt_archiver.aws.sns._SNS_CLIENT")
 def test_notify_success_none_dates_show_na(mock_sns: MagicMock) -> None:
     entry = LedgerEntry(
         service_date=None,
@@ -63,7 +63,7 @@ def test_notify_success_none_dates_show_na(mock_sns: MagicMock) -> None:
     assert "N/A" in message
 
 
-@patch("hsa_receipt_archiver.notifier.SNS_CLIENT")
+@patch("hsa_receipt_archiver.aws.sns._SNS_CLIENT")
 def test_notify_failure_publishes_to_sns(mock_sns: MagicMock) -> None:
     notify_failure("Something broke")
     mock_sns.publish.assert_called_once()
@@ -72,7 +72,7 @@ def test_notify_failure_publishes_to_sns(mock_sns: MagicMock) -> None:
     assert "Something broke" in call_kwargs["Message"]
 
 
-@patch("hsa_receipt_archiver.notifier.SNS_CLIENT")
+@patch("hsa_receipt_archiver.aws.sns._SNS_CLIENT")
 def test_notify_rejection_publishes_to_sns(mock_sns: MagicMock) -> None:
     notify_rejection("receipt.pdf", "Gym membership", "Not HSA-eligible")
     mock_sns.publish.assert_called_once()
@@ -83,14 +83,14 @@ def test_notify_rejection_publishes_to_sns(mock_sns: MagicMock) -> None:
     assert "receipt.pdf" in call_kwargs["Message"]
 
 
-@patch("hsa_receipt_archiver.notifier.SNS_CLIENT")
+@patch("hsa_receipt_archiver.aws.sns._SNS_CLIENT")
 def test_notify_rejection_includes_force_store_instructions(mock_sns: MagicMock) -> None:
     notify_rejection("file.pdf", "Item", "Reason")
     message = mock_sns.publish.call_args[1]["Message"]
     assert "FORCE_STORE" in message
 
 
-@patch("hsa_receipt_archiver.notifier.SNS_CLIENT")
+@patch("hsa_receipt_archiver.aws.sns._SNS_CLIENT")
 def test_notify_detailed_failure_publishes_to_detailed_topic(mock_sns: MagicMock) -> None:
     exc = RuntimeError("something broke")
     notify_detailed_failure("Context message", exc)
@@ -103,7 +103,7 @@ def test_notify_detailed_failure_publishes_to_detailed_topic(mock_sns: MagicMock
     assert "something broke" in call_kwargs["Message"]
 
 
-@patch("hsa_receipt_archiver.notifier.SNS_CLIENT")
+@patch("hsa_receipt_archiver.aws.sns._SNS_CLIENT")
 def test_notify_detailed_failure_includes_stack_trace(mock_sns: MagicMock) -> None:
     try:
         raise ValueError("test error")

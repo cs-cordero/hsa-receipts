@@ -5,14 +5,14 @@ import re
 import boto3
 from botocore.exceptions import ClientError
 
-S3_CLIENT = boto3.client("s3")
+_S3_CLIENT = boto3.client("s3")
 
-LEDGER_KEY = "ledger/hsa-receipts.csv"
+_LEDGER_KEY = "ledger/hsa-receipts.csv"
 
 
 def fetch_raw_email(bucket: str, key: str) -> bytes:
     """Fetch a raw email from S3."""
-    response = S3_CLIENT.get_object(Bucket=bucket, Key=key)
+    response = _S3_CLIENT.get_object(Bucket=bucket, Key=key)
     return response["Body"].read()
 
 
@@ -33,14 +33,14 @@ def store_receipt(bucket: str, pdf_data: bytes, receipt_date: str, provider: str
         receipt_key = f"receipts/{year}/{base_name}_{counter}.pdf"
         counter += 1
 
-    S3_CLIENT.put_object(Bucket=bucket, Key=receipt_key, Body=pdf_data, ContentType="application/pdf")
+    _S3_CLIENT.put_object(Bucket=bucket, Key=receipt_key, Body=pdf_data, ContentType="application/pdf")
     return f"s3://{bucket}/{receipt_key}"
 
 
 def fetch_ledger(bucket: str) -> str | None:
     """Fetch the CSV ledger from S3. Returns None if it doesn't exist yet."""
     try:
-        response = S3_CLIENT.get_object(Bucket=bucket, Key=LEDGER_KEY)
+        response = _S3_CLIENT.get_object(Bucket=bucket, Key=_LEDGER_KEY)
     except ClientError as e:
         if e.response["Error"]["Code"] == "NoSuchKey":
             return None
@@ -50,9 +50,9 @@ def fetch_ledger(bucket: str) -> str | None:
 
 def store_ledger(bucket: str, ledger_data: str) -> None:
     """Upload the updated CSV ledger to S3."""
-    S3_CLIENT.put_object(
+    _S3_CLIENT.put_object(
         Bucket=bucket,
-        Key=LEDGER_KEY,
+        Key=_LEDGER_KEY,
         Body=ledger_data.encode("utf-8"),
         ContentType="text/csv",
     )
@@ -60,7 +60,7 @@ def store_ledger(bucket: str, ledger_data: str) -> None:
 
 def tag_raw_email(bucket: str, key: str) -> None:
     """Tag a raw email as processed so it expires after 7 days instead of 30."""
-    S3_CLIENT.put_object_tagging(
+    _S3_CLIENT.put_object_tagging(
         Bucket=bucket,
         Key=key,
         Tagging={"TagSet": [{"Key": "status", "Value": "processed"}]},
@@ -70,7 +70,7 @@ def tag_raw_email(bucket: str, key: str) -> None:
 def _key_exists(bucket: str, key: str) -> bool:
     """Check if an S3 key already exists."""
     try:
-        S3_CLIENT.head_object(Bucket=bucket, Key=key)
+        _S3_CLIENT.head_object(Bucket=bucket, Key=key)
     except ClientError as e:
         if e.response["Error"]["Code"] == "404":
             return False

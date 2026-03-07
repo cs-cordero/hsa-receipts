@@ -5,8 +5,8 @@ from datetime import UTC, date, datetime
 from unittest.mock import MagicMock, patch
 
 from hsa_receipt_archiver.claude_client import EligibilityResult
-from hsa_receipt_archiver.email_parser import Attachment, ParsedEmail
-from hsa_receipt_archiver.ledger_manager import LedgerEntry
+from hsa_receipt_archiver.aws.ses import Attachment, ParsedEmail
+from hsa_receipt_archiver.archiver.ledger import LedgerEntry
 
 ENV_VARS = {
     "BUCKET_NAME": "test-bucket",
@@ -75,7 +75,7 @@ def _make_parsed_email(
 @patch("hsa_receipt_archiver.handler.check_hsa_eligibility")
 @patch("hsa_receipt_archiver.handler.parse_ses_email")
 @patch("hsa_receipt_archiver.handler.fetch_raw_email", return_value=b"raw-email")
-@patch("hsa_receipt_archiver.handler._get_ssm_param")
+@patch("hsa_receipt_archiver.handler.get_ssm_param")
 def test_happy_path(
     mock_ssm: MagicMock,
     mock_fetch_email: MagicMock,
@@ -152,7 +152,7 @@ def test_process_receipt_catches_exceptions(mock_handle: MagicMock, mock_notify_
 @patch("hsa_receipt_archiver.handler.tag_raw_email")
 @patch("hsa_receipt_archiver.handler.parse_ses_email")
 @patch("hsa_receipt_archiver.handler.fetch_raw_email", return_value=b"raw")
-@patch("hsa_receipt_archiver.handler._get_ssm_param")
+@patch("hsa_receipt_archiver.handler.get_ssm_param")
 def test_unauthorized_sender_returns_403(
     mock_ssm: MagicMock,
     mock_fetch: MagicMock,
@@ -173,7 +173,7 @@ def test_unauthorized_sender_returns_403(
 @patch("hsa_receipt_archiver.handler.tag_raw_email")
 @patch("hsa_receipt_archiver.handler.parse_ses_email")
 @patch("hsa_receipt_archiver.handler.fetch_raw_email", return_value=b"raw")
-@patch("hsa_receipt_archiver.handler._get_ssm_param")
+@patch("hsa_receipt_archiver.handler.get_ssm_param")
 def test_no_attachments_returns_400(
     mock_ssm: MagicMock,
     mock_fetch: MagicMock,
@@ -195,7 +195,7 @@ def test_no_attachments_returns_400(
 @patch("hsa_receipt_archiver.handler.check_hsa_eligibility")
 @patch("hsa_receipt_archiver.handler.parse_ses_email")
 @patch("hsa_receipt_archiver.handler.fetch_raw_email", return_value=b"raw")
-@patch("hsa_receipt_archiver.handler._get_ssm_param")
+@patch("hsa_receipt_archiver.handler.get_ssm_param")
 def test_ineligible_sends_rejection(
     mock_ssm: MagicMock,
     mock_fetch: MagicMock,
@@ -225,7 +225,7 @@ def test_ineligible_sends_rejection(
 @patch("hsa_receipt_archiver.handler.check_hsa_eligibility")
 @patch("hsa_receipt_archiver.handler.parse_ses_email")
 @patch("hsa_receipt_archiver.handler.fetch_raw_email", return_value=b"raw")
-@patch("hsa_receipt_archiver.handler._get_ssm_param")
+@patch("hsa_receipt_archiver.handler.get_ssm_param")
 def test_force_store_bypasses_eligibility(
     mock_ssm: MagicMock,
     mock_fetch: MagicMock,
@@ -260,7 +260,7 @@ def test_force_store_bypasses_eligibility(
 @patch("hsa_receipt_archiver.handler.check_hsa_eligibility")
 @patch("hsa_receipt_archiver.handler.parse_ses_email")
 @patch("hsa_receipt_archiver.handler.fetch_raw_email", return_value=b"raw")
-@patch("hsa_receipt_archiver.handler._get_ssm_param")
+@patch("hsa_receipt_archiver.handler.get_ssm_param")
 def test_multiple_results_share_pdf_uri(
     mock_ssm: MagicMock,
     mock_fetch: MagicMock,
@@ -300,7 +300,7 @@ def test_multiple_results_share_pdf_uri(
 @patch("hsa_receipt_archiver.handler.check_hsa_eligibility")
 @patch("hsa_receipt_archiver.handler.parse_ses_email")
 @patch("hsa_receipt_archiver.handler.fetch_raw_email", return_value=b"raw")
-@patch("hsa_receipt_archiver.handler._get_ssm_param")
+@patch("hsa_receipt_archiver.handler.get_ssm_param")
 def test_both_dates_none_with_force_store_uses_today(
     mock_ssm: MagicMock,
     mock_fetch: MagicMock,
@@ -329,22 +329,22 @@ def test_both_dates_none_with_force_store_uses_today(
 
 
 def test_parse_date_valid_string() -> None:
-    from hsa_receipt_archiver.handler import _parse_date
+    from hsa_receipt_archiver.util import parse_date
 
-    result = _parse_date("2025-03-15")
+    result = parse_date("2025-03-15")
     assert result == date(2025, 3, 15)
 
 
 def test_parse_date_none_returns_none() -> None:
-    from hsa_receipt_archiver.handler import _parse_date
+    from hsa_receipt_archiver.util import parse_date
 
-    assert _parse_date(None) is None
+    assert parse_date(None) is None
 
 
 def test_today_returns_utc_date() -> None:
-    from hsa_receipt_archiver.handler import _today
+    from hsa_receipt_archiver.util import today
 
-    result = _today()
+    result = today()
     assert result == datetime.now(tz=UTC).date()
 
 
@@ -355,7 +355,7 @@ def test_today_returns_utc_date() -> None:
 @patch("hsa_receipt_archiver.handler.check_hsa_eligibility", side_effect=RuntimeError("API failed"))
 @patch("hsa_receipt_archiver.handler.parse_ses_email")
 @patch("hsa_receipt_archiver.handler.fetch_raw_email", return_value=b"raw")
-@patch("hsa_receipt_archiver.handler._get_ssm_param")
+@patch("hsa_receipt_archiver.handler.get_ssm_param")
 def test_attachment_error_sends_failure_notification(
     mock_ssm: MagicMock,
     mock_fetch: MagicMock,
