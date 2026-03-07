@@ -11,7 +11,7 @@ import boto3
 from hsa_receipt_archiver.claude_client import check_hsa_eligibility
 from hsa_receipt_archiver.email_parser import Attachment, parse_ses_email
 from hsa_receipt_archiver.ledger_manager import LedgerEntry, add_ledger_entry
-from hsa_receipt_archiver.notifier import notify_failure, notify_rejection, notify_success
+from hsa_receipt_archiver.notifier import notify_detailed_failure, notify_failure, notify_rejection, notify_success
 from hsa_receipt_archiver.pdf_converter import convert_to_pdfa
 from hsa_receipt_archiver.s3_manager import (
     fetch_ledger,
@@ -46,8 +46,9 @@ def process_receipt(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Process an incoming SES email event."""
     try:
         return _handle(event)
-    except Exception:
+    except Exception as exc:
         logger.exception("Failed to process receipt")
+        notify_detailed_failure("Top-level failure in process_receipt", exc)
         return {"statusCode": 500, "body": "Internal error"}
 
 
@@ -89,9 +90,10 @@ def _handle(event: dict[str, Any]) -> dict[str, Any]:
         )
         try:
             _process_attachment(attachment, force_store, api_key)
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to process attachment %s", attachment.filename)
             notify_failure(f"Failed to process attachment: {attachment.filename}")
+            notify_detailed_failure(f"Failed to process attachment: {attachment.filename}", exc)
 
     tag_raw_email(BUCKET_NAME, raw_email_key)
     return {"statusCode": 200, "body": "Processed"}

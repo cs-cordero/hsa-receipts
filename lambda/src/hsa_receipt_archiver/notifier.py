@@ -1,6 +1,7 @@
 """Publish notifications to SNS."""
 
 import os
+import traceback
 
 import boto3
 
@@ -9,6 +10,7 @@ from hsa_receipt_archiver.ledger_manager import LedgerEntry
 SNS_CLIENT = boto3.client("sns")
 
 TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
+DETAILED_FAILURE_TOPIC_ARN = os.environ["SNS_DETAILED_FAILURE_TOPIC_ARN"]
 
 
 def notify_success(entries: list[LedgerEntry]) -> None:
@@ -59,3 +61,19 @@ def notify_rejection(description: str, reasoning: str) -> None:
         'line starting with "FORCE_STORE" to archive it regardless of eligibility.'
     )
     SNS_CLIENT.publish(TopicArn=TOPIC_ARN, Subject="HSA Receipt Not Eligible", Message=body)
+
+
+def notify_detailed_failure(message: str, exception: BaseException) -> None:
+    """Publish detailed failure information (including stack trace) to the detailed failures topic."""
+    tb = "".join(traceback.format_exception(type(exception), exception, exception.__traceback__))
+    body = (
+        f"Failure context: {message}\n\n"
+        f"Exception type: {type(exception).__qualname__}\n"
+        f"Exception message: {exception}\n\n"
+        f"Stack trace:\n{tb}"
+    )
+    SNS_CLIENT.publish(
+        TopicArn=DETAILED_FAILURE_TOPIC_ARN,
+        Subject="HSA Receipt Processing Failed (Detailed)",
+        Message=body,
+    )

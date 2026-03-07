@@ -3,7 +3,13 @@
 from unittest.mock import MagicMock, patch
 
 from hsa_receipt_archiver.ledger_manager import LedgerEntry
-from hsa_receipt_archiver.notifier import notify_failure, notify_rejection, notify_success
+from hsa_receipt_archiver.notifier import (
+    DETAILED_FAILURE_TOPIC_ARN,
+    notify_detailed_failure,
+    notify_failure,
+    notify_rejection,
+    notify_success,
+)
 
 
 @patch("hsa_receipt_archiver.notifier.SNS_CLIENT")
@@ -80,3 +86,28 @@ def test_notify_rejection_includes_force_store_instructions(mock_sns: MagicMock)
     notify_rejection("Item", "Reason")
     message = mock_sns.publish.call_args[1]["Message"]
     assert "FORCE_STORE" in message
+
+
+@patch("hsa_receipt_archiver.notifier.SNS_CLIENT")
+def test_notify_detailed_failure_publishes_to_detailed_topic(mock_sns: MagicMock) -> None:
+    exc = RuntimeError("something broke")
+    notify_detailed_failure("Context message", exc)
+    mock_sns.publish.assert_called_once()
+    call_kwargs = mock_sns.publish.call_args[1]
+    assert call_kwargs["TopicArn"] == DETAILED_FAILURE_TOPIC_ARN
+    assert call_kwargs["Subject"] == "HSA Receipt Processing Failed (Detailed)"
+    assert "Context message" in call_kwargs["Message"]
+    assert "RuntimeError" in call_kwargs["Message"]
+    assert "something broke" in call_kwargs["Message"]
+
+
+@patch("hsa_receipt_archiver.notifier.SNS_CLIENT")
+def test_notify_detailed_failure_includes_stack_trace(mock_sns: MagicMock) -> None:
+    try:
+        raise ValueError("test error")
+    except ValueError as exc:
+        notify_detailed_failure("Processing failed", exc)
+    message = mock_sns.publish.call_args[1]["Message"]
+    assert "Traceback" in message
+    assert "ValueError" in message
+    assert "test error" in message

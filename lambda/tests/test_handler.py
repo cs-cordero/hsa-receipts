@@ -89,12 +89,16 @@ def test_happy_path(
 
 
 @patch.dict(os.environ, ENV_VARS)
+@patch("hsa_receipt_archiver.handler.notify_detailed_failure")
 @patch("hsa_receipt_archiver.handler._handle", side_effect=RuntimeError("boom"))
-def test_process_receipt_catches_exceptions(mock_handle: MagicMock) -> None:
+def test_process_receipt_catches_exceptions(mock_handle: MagicMock, mock_notify_detailed: MagicMock) -> None:
     from hsa_receipt_archiver.handler import process_receipt
 
     result = process_receipt(_make_ses_event(), None)
     assert result["statusCode"] == 500
+    mock_notify_detailed.assert_called_once()
+    assert mock_notify_detailed.call_args[0][0] == "Top-level failure in process_receipt"
+    assert isinstance(mock_notify_detailed.call_args[0][1], RuntimeError)
 
 
 @patch.dict(os.environ, ENV_VARS)
@@ -299,6 +303,7 @@ def test_today_returns_utc_date() -> None:
 
 @patch.dict(os.environ, ENV_VARS)
 @patch("hsa_receipt_archiver.handler.tag_raw_email")
+@patch("hsa_receipt_archiver.handler.notify_detailed_failure")
 @patch("hsa_receipt_archiver.handler.notify_failure")
 @patch("hsa_receipt_archiver.handler.check_hsa_eligibility", side_effect=RuntimeError("API failed"))
 @patch("hsa_receipt_archiver.handler.parse_ses_email")
@@ -310,6 +315,7 @@ def test_attachment_error_sends_failure_notification(
     mock_parse: MagicMock,
     mock_check: MagicMock,
     mock_notify_failure: MagicMock,
+    mock_notify_detailed: MagicMock,
     mock_tag: MagicMock,
 ) -> None:
     mock_ssm.side_effect = lambda name: {"/test/api-key": "key", "/test/senders": "allowed@example.com"}[name]
@@ -320,4 +326,6 @@ def test_attachment_error_sends_failure_notification(
     result = _handle(_make_ses_event())
     assert result["statusCode"] == 200
     mock_notify_failure.assert_called_once()
+    mock_notify_detailed.assert_called_once()
+    assert isinstance(mock_notify_detailed.call_args[0][1], RuntimeError)
     mock_tag.assert_called_once()
