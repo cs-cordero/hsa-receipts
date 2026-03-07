@@ -22,6 +22,7 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
             bucketName: `hsa-receipts-${this.account}-${this.region}`,
             blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
             encryption: s3.BucketEncryption.S3_MANAGED,
+            versioned: true,
             removalPolicy: cdk.RemovalPolicy.RETAIN,
             lifecycleRules: [
                 {
