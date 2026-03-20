@@ -46,7 +46,9 @@ or null if not determinable
 
 If the document contains only one transaction, still return a JSON array with one element.
 
-Respond ONLY with the JSON array, no other text."""
+If the page or document is empty, blank, or contains no transaction information, return an empty JSON array: []
+
+You MUST always respond with a valid JSON array. Respond ONLY with the JSON array, no other text."""
 
 ImageMediaType = Literal["image/jpeg", "image/png", "image/gif", "image/webp"]
 IMAGE_CONTENT_TYPES: frozenset[str] = frozenset(get_args(ImageMediaType))
@@ -64,6 +66,35 @@ class EligibilityResult:
     payment_date: str | None
     patient: str | None
     reasoning: str
+
+
+def _parse_json_response(text: str) -> list[dict[str, object]]:
+    """Parse Claude's JSON response, handling both arrays and newline-delimited objects."""
+    if not text.strip():
+        raise ValueError("Claude returned an empty response — no JSON to parse")
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        # Claude sometimes returns newline-delimited JSON objects instead of an array
+        items: list[dict[str, object]] = []
+        decoder = json.JSONDecoder()
+        pos = 0
+        while pos < len(text):
+            text = text[pos:].lstrip()
+            if not text:
+                break
+            obj, end = decoder.raw_decode(text)
+            items.append(obj)
+            pos = end
+        if not items:
+            logger.error("Failed to parse Claude response as JSON: %s", text)
+            raise
+        return items
+
+    if isinstance(parsed, dict):
+        return [parsed]
+    return parsed
 
 
 def check_hsa_eligibility(api_key: str, attachment_data: bytes, content_type: str) -> list[EligibilityResult]:
@@ -123,7 +154,11 @@ def check_hsa_eligibility(api_key: str, attachment_data: bytes, content_type: st
 
     if response.stop_reason == "max_tokens":
         logger.error("Claude response truncated (max_tokens reached)")
-        raise ValueError("Claude response was truncated — the document may contain too many transactions")
+        raise ValueError(
+            "Claude response was truncated — the document may contain too many transactions. "
+            "Claude Haiku is unreliable when extracting this many transactions from a single "
+            "receipt and cannot be trusted. Manual entry for this receipt is required."
+        )
 
     # Strip markdown code fences if present
     stripped = response_text.strip()
@@ -133,7 +168,7 @@ def check_hsa_eligibility(api_key: str, attachment_data: bytes, content_type: st
         lines = [line for line in lines[1:] if line.strip() != "```"]
         stripped = "\n".join(lines)
 
-    items: list[dict[str, object]] = json.loads(stripped)
+    items: list[dict[str, object]] = _parse_json_response(stripped)
 
     results: list[EligibilityResult] = []
     for item in items:

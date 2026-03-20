@@ -7,7 +7,9 @@ as raw-emails/{id}, and invokes the Lambda with a synthetic SES event.
 import argparse
 import json
 import mimetypes
+import shutil
 import sys
+import time
 import uuid
 from email.message import EmailMessage
 from pathlib import Path
@@ -52,7 +54,20 @@ def upload_and_invoke(
 
     s3_client.put_object(Bucket=bucket, Key=s3_key, Body=mime_bytes)
 
-    event = {"Records": [{"ses": {"mail": {"messageId": message_id}}}]}
+    event = {
+        "Records": [
+            {
+                "ses": {
+                    "mail": {"messageId": message_id},
+                    "receipt": {
+                        "spfVerdict": {"status": "PASS"},
+                        "dkimVerdict": {"status": "PASS"},
+                        "dmarcVerdict": {"status": "PASS"},
+                    },
+                }
+            }
+        ]
+    }
     response = lambda_client.invoke(
         FunctionName=LAMBDA_FUNCTION_NAME,
         InvocationType="RequestResponse",
@@ -80,11 +95,14 @@ def main() -> None:
     parser.add_argument("directory", type=Path, help="Directory containing receipt files")
     parser.add_argument("--bucket", required=True, help="S3 bucket name")
     parser.add_argument("--sender", required=True, help="Allowed sender email address")
+    parser.add_argument("--failures-dir", required=True, type=Path, help="Directory to copy failed files into")
     args = parser.parse_args()
 
     if not args.directory.is_dir():
         print(f"Error: {args.directory} is not a directory", file=sys.stderr)
         sys.exit(1)
+
+    args.failures_dir.mkdir(parents=True, exist_ok=True)
 
     files = collect_receipt_files(args.directory)
     if not files:
@@ -109,11 +127,16 @@ def main() -> None:
             if status == 200:
                 print(f"OK ({status})")
             else:
-                print(f"WARN ({status}): {result.get('body', '')}")
+                print(f"FAILED ({status}): {result.get('body', '')}")
+                shutil.copy2(path, args.failures_dir / path.name)
                 failures += 1
         except Exception as exc:
             print(f"ERROR: {exc}")
+            shutil.copy2(path, args.failures_dir / path.name)
             failures += 1
+
+        if i < len(files):
+            time.sleep(10)
 
     print(f"\nDone. {len(files) - failures}/{len(files)} succeeded.")
     if failures:

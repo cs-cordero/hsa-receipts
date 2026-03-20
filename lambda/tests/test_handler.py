@@ -4,9 +4,9 @@ import os
 from datetime import UTC, date, datetime
 from unittest.mock import MagicMock, patch
 
-from hsa_receipt_archiver.claude_client import EligibilityResult
-from hsa_receipt_archiver.aws.ses import Attachment, ParsedEmail
 from hsa_receipt_archiver.archiver.ledger import LedgerEntry
+from hsa_receipt_archiver.aws.ses import Attachment, ParsedEmail
+from hsa_receipt_archiver.claude_client import EligibilityResult
 
 ENV_VARS = {
     "BUCKET_NAME": "test-bucket",
@@ -371,8 +371,43 @@ def test_attachment_error_sends_failure_notification(
     from hsa_receipt_archiver.handler import _handle
 
     result = _handle(_make_ses_event())
-    assert result["statusCode"] == 200
+    assert result["statusCode"] == 500
+    assert "receipt.jpg" in result["body"]
     mock_notify_failure.assert_called_once()
     mock_notify_detailed.assert_called_once()
     assert isinstance(mock_notify_detailed.call_args[0][1], RuntimeError)
     mock_tag.assert_called_once()
+
+
+@patch.dict(os.environ, ENV_VARS)
+@patch("hsa_receipt_archiver.handler.tag_raw_email")
+@patch("hsa_receipt_archiver.handler.notify_detailed_failure")
+@patch("hsa_receipt_archiver.handler.notify_failure")
+@patch("hsa_receipt_archiver.handler.check_hsa_eligibility")
+@patch("hsa_receipt_archiver.handler.parse_ses_email")
+@patch("hsa_receipt_archiver.handler.fetch_raw_email", return_value=b"raw")
+@patch("hsa_receipt_archiver.handler.get_ssm_param")
+def test_too_many_transactions_fails(
+    mock_ssm: MagicMock,
+    mock_fetch: MagicMock,
+    mock_parse: MagicMock,
+    mock_check: MagicMock,
+    mock_notify_failure: MagicMock,
+    mock_notify_detailed: MagicMock,
+    mock_tag: MagicMock,
+) -> None:
+    mock_ssm.side_effect = lambda name: {"/test/api-key": "key", "/test/senders": "allowed@example.com"}[name]
+    mock_parse.return_value = _make_parsed_email()
+    mock_check.return_value = [
+        _make_eligibility_result(description=f"Transaction {i}") for i in range(4)
+    ]
+
+    from hsa_receipt_archiver.handler import _handle
+
+    result = _handle(_make_ses_event())
+    assert result["statusCode"] == 500
+    assert "receipt.jpg" in result["body"]
+    mock_notify_failure.assert_called_once()
+    mock_notify_detailed.assert_called_once()
+    assert isinstance(mock_notify_detailed.call_args[0][1], ValueError)
+    assert "manual entry" in str(mock_notify_detailed.call_args[0][1]).lower()
