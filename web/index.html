@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HSA Receipts</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.5.3/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@35.1.0/dist/ag-grid-community.min.js"></script>
+</head>
+<body>
+    <header>
+        <div id="header-left">
+            <h1>HSA Receipts</h1>
+            <nav>
+                <a href="/" class="active">Ledger</a>
+                <a href="/upload">Upload</a>
+            </nav>
+        </div>
+        <div id="header-actions">
+            <span id="unsaved-indicator" class="hidden">Unsaved changes</span>
+            <button id="sign-out-btn" onclick="signOut()" style="display:none;">Sign Out</button>
+        </div>
+    </header>
+    <div id="toolbar">
+        <button id="add-row-btn" title="Add new row">+ Add Row</button>
+        <button id="delete-rows-btn" title="Delete selected rows">Delete Selected</button>
+        <button id="save-btn" title="Save ledger">Save</button>
+        <span id="status-message"></span>
+    </div>
+    <div id="grid-container">
+        <div id="ledger-grid"></div>
+    </div>
+    <script src="config.js"></script>
+    <script src="auth.js"></script>
+    <script src="ledger.js"></script>
+    <script>
+        (async function () {
+            await initAuth();
+            document.getElementById("sign-out-btn").style.display = "inline";
+            await initLedger();
+        })();
+    </script>
+</body>
+</html>

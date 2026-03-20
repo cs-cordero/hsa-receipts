@@ -36,3 +36,4 @@ Read `docs/architecture.md` and `docs/user_guide.md` to understand the project s
 - **Never use deprecated features or packages.** Always use the latest stable APIs, options, and versions from our dependencies. If you notice deprecated usage in existing code, flag it or fix it.
 - All module-level private constants use ALL_CAPS with a single leading underscore (e.g., `_SNS_CLIENT`).
 - Required environment variables must use `get_env_var()` from `util.py`, which raises on missing or blank values.
+- **Every CDK stack class must have a JSDoc comment listing all AWS resources it creates.** When adding, removing, or modifying resources in a stack, update the class docstring to match.

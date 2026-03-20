@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HSA Receipts — Signing in...</title>
+</head>
+<body>
+    <p>Signing in...</p>
+    <script src="config.js"></script>
+    <script src="auth.js"></script>
+    <script>
+        (async function () {
+            const ok = await handleCallback();
+            if (ok) {
+                window.location.href = CONFIG.appUrl + "/";
+            } else {
+                document.body.innerHTML = "<p>Sign-in failed. <a href=\"" + CONFIG.appUrl + CONFIG.logoutPath + "\">Try again</a></p>";
+            }
+        })();
+    </script>
+</body>
+</html>

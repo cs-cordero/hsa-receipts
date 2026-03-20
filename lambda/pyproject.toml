@@ -18,6 +18,7 @@ dev = [
     "ty",
     "ruff",
     "boto3-stubs[essential]",
+    "botocore[crt]",
 ]
 
 [tool.hatch.build.targets.wheel]

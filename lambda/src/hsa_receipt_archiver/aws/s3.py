@@ -58,6 +58,17 @@ def store_ledger(bucket: str, ledger_data: str) -> None:
     )
 
 
+def store_upload(bucket: str, key: str, data: bytes, content_type: str) -> None:
+    """Store an uploaded file to S3 under raw-uploads/."""
+    _S3_CLIENT.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type)
+
+
+def fetch_upload(bucket: str, key: str) -> bytes:
+    """Fetch an uploaded file from S3."""
+    response = _S3_CLIENT.get_object(Bucket=bucket, Key=key)
+    return response["Body"].read()
+
+
 def tag_raw_email(bucket: str, key: str) -> None:
     """Tag a raw email as processed so it expires after 7 days instead of 30."""
     _S3_CLIENT.put_object_tagging(

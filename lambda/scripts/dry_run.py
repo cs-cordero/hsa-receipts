@@ -62,8 +62,11 @@ def main() -> None:
                 "role": "user",
                 "content": [
                     content_block,
-                    {"type": "text", "text": "Please analyze this receipt or statement for HSA eligibility."
-                     " Extract each out-of-pocket transaction separately."},
+                    {
+                        "type": "text",
+                        "text": "Please analyze this receipt or statement for HSA eligibility."
+                        " Extract each out-of-pocket transaction separately.",
+                    },
                 ],
             }
         ],

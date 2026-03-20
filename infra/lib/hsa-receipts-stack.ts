@@ -3,22 +3,46 @@ import * as budgets from "aws-cdk-lib/aws-budgets";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as route53 from "aws-cdk-lib/aws-route53";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as ses from "aws-cdk-lib/aws-ses";
 import * as sesActions from "aws-cdk-lib/aws-ses-actions";
 import * as sns from "aws-cdk-lib/aws-sns";
 import type { Construct } from "constructs";
+import { HSA_DOMAIN } from "./constants";
 
-const DOMAIN_NAME = "hsa.corderohq.com";
+interface HsaReceiptsStackProps extends cdk.StackProps {
+    readonly hsaZone: route53.IHostedZone;
+}
 
-export class HsaReceiptArchiverStack extends cdk.Stack {
-    constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+/**
+ * HSA receipt processing via email (SES inbound).
+ *
+ * AWS resources:
+ * - S3 bucket: hsa-receipts (versioned, lifecycle rules for raw-emails/)
+ * - CloudWatch log group: /aws/lambda/hsa-receipt-archiver
+ * - SNS topic: hsa-receipt-archiver-notifications
+ * - SNS topic: hsa-receipt-archiver-detailed-failures
+ * - Lambda function: hsa-receipt-archiver (Python 3.13, Ghostscript bundled)
+ * - IAM policy: S3 read/write, SSM GetParameter, SNS Publish
+ * - SES receipt rule set: hsa-receipt-archiver
+ * - SES receipt rule: receipts@hsa.corderohq.com → S3 + Lambda
+ * - Route 53 MX record: hsa.corderohq.com → inbound-smtp.us-east-1.amazonaws.com
+ * - Route 53 TXT record: _amazonses.hsa.corderohq.com (SES domain verification)
+ * - SNS topic: hsa-receipt-archiver-budget-alerts
+ * - Budget: hsa-receipt-archiver-monthly ($10 USD, alerts at 50/80/100%)
+ */
+export class HsaReceiptsStack extends cdk.Stack {
+    readonly bucket: s3.Bucket;
+    readonly handler: lambda.Function;
+
+    constructor(scope: Construct, id: string, props: HsaReceiptsStackProps) {
         super(scope, id, props);
 
         cdk.Tags.of(this).add("project", "hsa-receipt-archiver");
 
         // S3 Bucket
-        const bucket = new s3.Bucket(this, "ReceiptsBucket", {
+        this.bucket = new s3.Bucket(this, "ReceiptsBucket", {
             bucketName: `hsa-receipts-${this.account}-${this.region}`,
             blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
             encryption: s3.BucketEncryption.S3_MANAGED,
@@ -55,10 +79,10 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
         });
 
         // Lambda Function
-        const handler = new lambda.Function(this, "ReceiptArchiver", {
+        this.handler = new lambda.Function(this, "ReceiptArchiver", {
             functionName: "hsa-receipt-archiver",
             runtime: lambda.Runtime.PYTHON_3_13,
-            handler: "hsa_receipt_archiver.handler.process_receipt",
+            handler: "hsa_receipt_archiver.receipt_handler.process_receipt",
             code: lambda.Code.fromAsset("../lambda", {
                 bundling: {
                     image: lambda.Runtime.PYTHON_3_13.bundlingImage,
@@ -82,7 +106,7 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
             timeout: cdk.Duration.minutes(5),
             logGroup,
             environment: {
-                BUCKET_NAME: bucket.bucketName,
+                BUCKET_NAME: this.bucket.bucketName,
                 SNS_TOPIC_ARN: notificationTopic.topicArn,
                 SNS_DETAILED_FAILURE_TOPIC_ARN: detailedFailureTopic.topicArn,
                 SSM_API_KEY_PARAM: "/hsa-receipt-archiver/anthropic-api-key",
@@ -93,9 +117,9 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
         });
 
         // IAM Permissions
-        bucket.grantReadWrite(handler);
+        this.bucket.grantReadWrite(this.handler);
 
-        handler.addToRolePolicy(
+        this.handler.addToRolePolicy(
             new iam.PolicyStatement({
                 actions: ["ssm:GetParameter"],
                 resources: [
@@ -111,8 +135,8 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
             }),
         );
 
-        notificationTopic.grantPublish(handler);
-        detailedFailureTopic.grantPublish(handler);
+        notificationTopic.grantPublish(this.handler);
+        detailedFailureTopic.grantPublish(this.handler);
 
         // SES Receipt Rule Set + Rule
         const ruleSet = new ses.ReceiptRuleSet(this, "ReceiptRuleSet", {
@@ -120,18 +144,38 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
         });
 
         ruleSet.addRule("ReceiptRule", {
-            recipients: [`receipts@${DOMAIN_NAME}`],
+            recipients: [`receipts@${HSA_DOMAIN}`],
             actions: [
                 new sesActions.S3({
-                    bucket,
+                    bucket: this.bucket,
                     objectKeyPrefix: "raw-emails/",
                 }),
                 new sesActions.Lambda({
-                    function: handler,
+                    function: this.handler,
                 }),
             ],
         });
 
+        this.createDnsRecords(props.hsaZone);
+        this.createBudgetAlerts();
+    }
+
+    private createDnsRecords(hsaZone: route53.IHostedZone): void {
+        // SES MX record in Route 53
+        new route53.MxRecord(this, "SesMxRecord", {
+            zone: hsaZone,
+            values: [{ priority: 10, hostName: "inbound-smtp.us-east-1.amazonaws.com" }],
+        });
+
+        // SES domain verification TXT record
+        new route53.TxtRecord(this, "SesTxtRecord", {
+            zone: hsaZone,
+            recordName: `_amazonses.${HSA_DOMAIN}`,
+            values: ["YonxACp7We9tgvwNDh9cZQtqb5HkmUuxn0NGRnWIRqk="],
+        });
+    }
+
+    private createBudgetAlerts(): void {
         // Budget Alerts via SNS
         const budgetTopic = new sns.Topic(this, "BudgetAlertsTopic", {
             topicName: "hsa-receipt-archiver-budget-alerts",
