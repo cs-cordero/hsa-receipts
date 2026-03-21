@@ -8,17 +8,20 @@ import * as ses from "aws-cdk-lib/aws-ses";
 import * as sesActions from "aws-cdk-lib/aws-ses-actions";
 import * as sns from "aws-cdk-lib/aws-sns";
 import type { Construct } from "constructs";
+import { PYTHON_BUNDLING_OPTIONS } from "./lambda-bundling";
 
 const DOMAIN_NAME = "hsa.corderohq.com";
 
-export class HsaReceiptArchiverStack extends cdk.Stack {
+export class HsaReceiptsStack extends cdk.Stack {
+    readonly bucket: s3.Bucket;
+
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
 
         cdk.Tags.of(this).add("project", "hsa-receipt-archiver");
 
         // S3 Bucket
-        const bucket = new s3.Bucket(this, "ReceiptsBucket", {
+        this.bucket = new s3.Bucket(this, "ReceiptsBucket", {
             bucketName: `hsa-receipts-${this.account}-${this.region}`,
             blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
             encryption: s3.BucketEncryption.S3_MANAGED,
@@ -60,29 +63,13 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
             runtime: lambda.Runtime.PYTHON_3_13,
             handler: "hsa_receipt_archiver.handler.process_receipt",
             code: lambda.Code.fromAsset("../lambda", {
-                bundling: {
-                    image: lambda.Runtime.PYTHON_3_13.bundlingImage,
-                    user: "root",
-                    command: [
-                        "bash",
-                        "-c",
-                        [
-                            "dnf install -y ghostscript",
-                            "pip install -r requirements.txt -t /asset-output",
-                            "cp -r src/hsa_receipt_archiver /asset-output/",
-                            "mkdir -p /asset-output/bin /asset-output/lib",
-                            "cp /usr/bin/gs /asset-output/bin/gs",
-                            "ldd /usr/bin/gs | awk '/=>/ {print $3}' | xargs -I{} cp {} /asset-output/lib/",
-                            "cp -rL /usr/share/ghostscript /asset-output/share/",
-                        ].join(" && "),
-                    ],
-                },
+                bundling: PYTHON_BUNDLING_OPTIONS,
             }),
             memorySize: 1024,
             timeout: cdk.Duration.minutes(5),
             logGroup,
             environment: {
-                BUCKET_NAME: bucket.bucketName,
+                BUCKET_NAME: this.bucket.bucketName,
                 SNS_TOPIC_ARN: notificationTopic.topicArn,
                 SNS_DETAILED_FAILURE_TOPIC_ARN: detailedFailureTopic.topicArn,
                 SSM_API_KEY_PARAM: "/hsa-receipt-archiver/anthropic-api-key",
@@ -93,7 +80,7 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
         });
 
         // IAM Permissions
-        bucket.grantReadWrite(handler);
+        this.bucket.grantReadWrite(handler);
 
         handler.addToRolePolicy(
             new iam.PolicyStatement({
@@ -123,7 +110,7 @@ export class HsaReceiptArchiverStack extends cdk.Stack {
             recipients: [`receipts@${DOMAIN_NAME}`],
             actions: [
                 new sesActions.S3({
-                    bucket,
+                    bucket: this.bucket,
                     objectKeyPrefix: "raw-emails/",
                 }),
                 new sesActions.Lambda({
