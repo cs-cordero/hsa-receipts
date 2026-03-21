@@ -28,6 +28,11 @@ export class PlatformStack extends cdk.Stack {
                 requireUppercase: true,
                 requireDigits: true,
                 requireSymbols: true,
+                tempPasswordValidity: cdk.Duration.days(1),
+            },
+            deviceTracking: {
+                challengeRequiredOnNewDevice: true,
+                deviceOnlyRememberedOnUserPrompt: true,
             },
             accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
             removalPolicy: cdk.RemovalPolicy.RETAIN,

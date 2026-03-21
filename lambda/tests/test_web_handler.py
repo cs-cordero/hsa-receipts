@@ -3,6 +3,7 @@
 import base64
 import json
 import os
+import typing
 from unittest.mock import MagicMock, patch
 
 from hsa_receipt_archiver.web_handler import handle
@@ -12,9 +13,18 @@ ENV_VARS = {"BUCKET_NAME": "test-bucket", "PROCESSOR_FUNCTION_NAME": "hsa-receip
 SAMPLE_CSV = "Id,Service Date,Payment Date,Vendor/Provider\n1,2024-01-01,2024-01-02,Dr. Smith\n"
 
 
-def _make_event(method: str, path: str, body: str | None = None, base64_encode: bool = False) -> dict:
+def _make_event(
+    method: str,
+    path: str,
+    body: str | None = None,
+    base64_encode: bool = False,
+    email: str = "user@example.com",
+) -> dict:
     event: dict = {
-        "requestContext": {"http": {"method": method}},
+        "requestContext": {
+            "http": {"method": method},
+            "authorizer": {"jwt": {"claims": {"email": email, "sub": "abc-123"}}},
+        },
         "rawPath": path,
         "isBase64Encoded": base64_encode,
         "body": None,
@@ -175,3 +185,89 @@ class TestRouting:
         result = handle(_make_event("DELETE", "/ledger"), None)
 
         assert result["statusCode"] == 404
+
+
+class TestSecurityHeaders:
+    """All responses must include defense-in-depth security headers."""
+
+    EXPECTED_HEADERS: typing.ClassVar[dict[str, str]] = {
+        "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Cache-Control": "no-store",
+    }
+
+    @patch.dict(os.environ, ENV_VARS)
+    @patch("hsa_receipt_archiver.web_handler.fetch_ledger", return_value=SAMPLE_CSV)
+    def test_get_ledger_has_security_headers(self, mock_fetch: MagicMock) -> None:
+        result = handle(_make_event("GET", "/ledger"), None)
+
+        for header, value in self.EXPECTED_HEADERS.items():
+            assert result["headers"][header] == value
+
+    @patch.dict(os.environ, ENV_VARS)
+    @patch("hsa_receipt_archiver.web_handler.store_ledger")
+    def test_put_ledger_has_security_headers(self, mock_store: MagicMock) -> None:
+        result = handle(_make_event("PUT", "/ledger", body=SAMPLE_CSV), None)
+
+        for header, value in self.EXPECTED_HEADERS.items():
+            assert result["headers"][header] == value
+
+    @patch.dict(os.environ, ENV_VARS)
+    @patch("hsa_receipt_archiver.web_handler._LAMBDA_CLIENT")
+    @patch("hsa_receipt_archiver.web_handler.store_upload")
+    def test_post_receipt_has_security_headers(self, mock_upload: MagicMock, mock_lambda: MagicMock) -> None:
+        mock_payload = MagicMock()
+        mock_payload.read.return_value = json.dumps({"statusCode": 200, "body": "{}"}).encode()
+        mock_lambda.invoke.return_value = {"Payload": mock_payload}
+
+        body = json.dumps(
+            {
+                "filename": "receipt.pdf",
+                "content_type": "application/pdf",
+                "data": base64.b64encode(b"pdf-data").decode("ascii"),
+            }
+        )
+        result = handle(_make_event("POST", "/receipt", body=body), None)
+
+        for header, value in self.EXPECTED_HEADERS.items():
+            assert result["headers"][header] == value
+
+    @patch.dict(os.environ, ENV_VARS)
+    def test_error_response_has_security_headers(self) -> None:
+        result = handle(_make_event("GET", "/unknown"), None)
+
+        for header, value in self.EXPECTED_HEADERS.items():
+            assert result["headers"][header] == value
+
+    @patch.dict(os.environ, ENV_VARS)
+    @patch("hsa_receipt_archiver.web_handler.fetch_ledger", side_effect=Exception("boom"))
+    def test_500_response_has_security_headers(self, mock_fetch: MagicMock) -> None:
+        result = handle(_make_event("GET", "/ledger"), None)
+
+        assert result["statusCode"] == 500
+        for header, value in self.EXPECTED_HEADERS.items():
+            assert result["headers"][header] == value
+
+
+class TestAuditLogging:
+    """Requests must be logged with the authenticated user's email."""
+
+    @patch.dict(os.environ, ENV_VARS)
+    @patch("hsa_receipt_archiver.web_handler.fetch_ledger", return_value=SAMPLE_CSV)
+    def test_logs_user_email_on_request(self, mock_fetch: MagicMock) -> None:
+        with patch("hsa_receipt_archiver.web_handler.LOGGER") as mock_logger:
+            handle(_make_event("GET", "/ledger", email="alice@example.com"), None)
+
+            mock_logger.info.assert_any_call("Request from %s: %s %s", "alice@example.com", "GET", "/ledger")
+
+    @patch.dict(os.environ, ENV_VARS)
+    @patch("hsa_receipt_archiver.web_handler.fetch_ledger", return_value=SAMPLE_CSV)
+    def test_logs_unknown_when_no_claims(self, mock_fetch: MagicMock) -> None:
+        event = _make_event("GET", "/ledger")
+        del event["requestContext"]["authorizer"]
+
+        with patch("hsa_receipt_archiver.web_handler.LOGGER") as mock_logger:
+            handle(event, None)
+
+            mock_logger.info.assert_any_call("Request from %s: %s %s", "unknown", "GET", "/ledger")

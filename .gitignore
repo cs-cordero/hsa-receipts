@@ -6,6 +6,7 @@ cdk.out/
 *.js.map
 !eslint.config.mjs
 !prettier.config.mjs
+!web/**/*.js
 
 # Python
 __pycache__/

@@ -30,6 +30,12 @@ export class HsaWebStack extends cdk.Stack {
             userPool: props.userPool,
             userPoolClientName: "hsa-web-app",
             generateSecret: false,
+            preventUserExistenceErrors: true,
+            enableTokenRevocation: true,
+            authSessionValidity: cdk.Duration.minutes(3),
+            idTokenValidity: cdk.Duration.minutes(15),
+            accessTokenValidity: cdk.Duration.minutes(15),
+            refreshTokenValidity: cdk.Duration.days(1),
             oAuth: {
                 flows: { authorizationCodeGrant: true },
                 callbackUrls: [`https://${props.distribution.distributionDomainName}/hsa/callback.html`],

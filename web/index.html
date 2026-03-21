@@ -6,7 +6,20 @@
     <title>HSA Receipts</title>
 </head>
 <body>
-    <h1>HSA Receipts</h1>
-    <p>Placeholder — ledger editor coming soon.</p>
+    <header>
+        <h1>HSA Receipts</h1>
+        <button id="sign-out-btn" onclick="signOut()" style="display:none;">Sign Out</button>
+    </header>
+    <main>
+        <p>Placeholder — ledger editor coming soon.</p>
+    </main>
+    <script src="config.js"></script>
+    <script src="auth.js"></script>
+    <script>
+        (async function () {
+            await initAuth();
+            document.getElementById("sign-out-btn").style.display = "inline";
+        })();
+    </script>
 </body>
 </html>

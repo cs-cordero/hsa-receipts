@@ -14,6 +14,13 @@ from hsa_receipt_archiver.util import get_env_var
 
 LOGGER = logging.getLogger(__name__)
 
+_SECURITY_HEADERS = {
+    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Cache-Control": "no-store",
+}
+
 ALLOWED_CONTENT_TYPES = {
     "application/pdf",
     "image/jpeg",
@@ -30,6 +37,10 @@ def handle(event: dict[str, Any], context: Any) -> dict[str, Any]:
     try:
         method = event["requestContext"]["http"]["method"]
         path = event["rawPath"]
+
+        claims = event.get("requestContext", {}).get("authorizer", {}).get("jwt", {}).get("claims", {})
+        user_email = claims.get("email", "unknown")
+        LOGGER.info("Request from %s: %s %s", user_email, method, path)
 
         if path == "/ledger" and method == "GET":
             return _get_ledger()
@@ -117,7 +128,7 @@ def _post_receipt(event: dict[str, Any]) -> dict[str, Any]:
 def _csv_response(status: int, body: str) -> dict[str, Any]:
     return {
         "statusCode": status,
-        "headers": {"Content-Type": "text/csv"},
+        "headers": {**_SECURITY_HEADERS, "Content-Type": "text/csv"},
         "body": body,
     }
 
@@ -125,7 +136,7 @@ def _csv_response(status: int, body: str) -> dict[str, Any]:
 def _json_response(status: int, body: str) -> dict[str, Any]:
     return {
         "statusCode": status,
-        "headers": {"Content-Type": "application/json"},
+        "headers": {**_SECURITY_HEADERS, "Content-Type": "application/json"},
         "body": body,
     }
 
@@ -133,6 +144,6 @@ def _json_response(status: int, body: str) -> dict[str, Any]:
 def _response(status: int, message: str) -> dict[str, Any]:
     return {
         "statusCode": status,
-        "headers": {"Content-Type": "text/plain"},
+        "headers": {**_SECURITY_HEADERS, "Content-Type": "text/plain"},
         "body": message,
     }
