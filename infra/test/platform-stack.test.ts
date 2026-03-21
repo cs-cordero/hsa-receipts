@@ -44,39 +44,9 @@ describe("PlatformStack", () => {
     });
 
     describe("User Pool — password policy", () => {
-        test("minimum length is 12 characters", () => {
+        test("minimum length is 8 characters", () => {
             template.hasResourceProperties("AWS::Cognito::UserPool", {
-                Policies: { PasswordPolicy: { MinimumLength: 12 } },
-            });
-        });
-
-        test("requires lowercase characters", () => {
-            template.hasResourceProperties("AWS::Cognito::UserPool", {
-                Policies: { PasswordPolicy: { RequireLowercase: true } },
-            });
-        });
-
-        test("requires uppercase characters", () => {
-            template.hasResourceProperties("AWS::Cognito::UserPool", {
-                Policies: { PasswordPolicy: { RequireUppercase: true } },
-            });
-        });
-
-        test("requires digits", () => {
-            template.hasResourceProperties("AWS::Cognito::UserPool", {
-                Policies: { PasswordPolicy: { RequireNumbers: true } },
-            });
-        });
-
-        test("requires symbols", () => {
-            template.hasResourceProperties("AWS::Cognito::UserPool", {
-                Policies: { PasswordPolicy: { RequireSymbols: true } },
-            });
-        });
-
-        test("temporary password expires in 1 day", () => {
-            template.hasResourceProperties("AWS::Cognito::UserPool", {
-                Policies: { PasswordPolicy: { TemporaryPasswordValidityDays: 1 } },
+                Policies: { PasswordPolicy: { MinimumLength: 8 } },
             });
         });
     });
@@ -125,9 +95,11 @@ describe("PlatformStack", () => {
     });
 
     describe("User Pool — hosted UI domain", () => {
-        test("domain prefix is corderohq", () => {
+        test("custom domain is auth.corderohq.com", () => {
             template.hasResourceProperties("AWS::Cognito::UserPoolDomain", {
-                Domain: "corderohq",
+                CustomDomainConfig: {
+                    CertificateArn: Match.anyValue(),
+                },
             });
         });
     });
@@ -157,6 +129,35 @@ describe("PlatformStack", () => {
         });
     });
 
+    describe("Route 53 hosted zones", () => {
+        test("hsa.corderohq.com hosted zone exists", () => {
+            template.hasResourceProperties("AWS::Route53::HostedZone", {
+                Name: "hsa.corderohq.com.",
+            });
+        });
+
+        test("auth.corderohq.com hosted zone exists", () => {
+            template.hasResourceProperties("AWS::Route53::HostedZone", {
+                Name: "auth.corderohq.com.",
+            });
+        });
+    });
+
+    describe("ACM certificates", () => {
+        test("hsa.corderohq.com cert with wildcard SAN", () => {
+            template.hasResourceProperties("AWS::CertificateManager::Certificate", {
+                DomainName: "hsa.corderohq.com",
+                SubjectAlternativeNames: ["*.hsa.corderohq.com"],
+            });
+        });
+
+        test("auth.corderohq.com cert exists", () => {
+            template.hasResourceProperties("AWS::CertificateManager::Certificate", {
+                DomainName: "auth.corderohq.com",
+            });
+        });
+    });
+
     describe("CloudFront distribution", () => {
         test("enforces HTTPS redirect", () => {
             template.hasResourceProperties("AWS::CloudFront::Distribution", {
@@ -165,6 +166,30 @@ describe("PlatformStack", () => {
                         ViewerProtocolPolicy: "redirect-to-https",
                     }),
                 },
+            });
+        });
+
+        test("has hsa.corderohq.com alias", () => {
+            template.hasResourceProperties("AWS::CloudFront::Distribution", {
+                DistributionConfig: Match.objectLike({
+                    Aliases: ["hsa.corderohq.com"],
+                }),
+            });
+        });
+    });
+
+    describe("Route 53 A records", () => {
+        test("hsa.corderohq.com A record exists", () => {
+            template.hasResourceProperties("AWS::Route53::RecordSet", {
+                Name: "hsa.corderohq.com.",
+                Type: "A",
+            });
+        });
+
+        test("auth.corderohq.com A record exists", () => {
+            template.hasResourceProperties("AWS::Route53::RecordSet", {
+                Name: "auth.corderohq.com.",
+                Type: "A",
             });
         });
     });

@@ -3,6 +3,7 @@ import * as budgets from "aws-cdk-lib/aws-budgets";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as route53 from "aws-cdk-lib/aws-route53";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as ses from "aws-cdk-lib/aws-ses";
 import * as sesActions from "aws-cdk-lib/aws-ses-actions";
@@ -12,11 +13,15 @@ import { PYTHON_BUNDLING_OPTIONS } from "./lambda-bundling";
 
 const DOMAIN_NAME = "hsa.corderohq.com";
 
+interface HsaReceiptsStackProps extends cdk.StackProps {
+    readonly hsaZone: route53.IHostedZone;
+}
+
 export class HsaReceiptsStack extends cdk.Stack {
     readonly bucket: s3.Bucket;
     readonly handler: lambda.Function;
 
-    constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    constructor(scope: Construct, id: string, props: HsaReceiptsStackProps) {
         super(scope, id, props);
 
         cdk.Tags.of(this).add("project", "hsa-receipt-archiver");
@@ -118,6 +123,19 @@ export class HsaReceiptsStack extends cdk.Stack {
                     function: this.handler,
                 }),
             ],
+        });
+
+        // SES MX record in Route 53 — enables email receiving at receipts@hsa.corderohq.com
+        new route53.MxRecord(this, "SesMxRecord", {
+            zone: props.hsaZone,
+            values: [{ priority: 10, hostName: "inbound-smtp.us-east-1.amazonaws.com" }],
+        });
+
+        // SES domain verification TXT record — migrated from Porkbun
+        new route53.TxtRecord(this, "SesTxtRecord", {
+            zone: props.hsaZone,
+            recordName: "_amazonses.hsa.corderohq.com",
+            values: ["YonxACp7We9tgvwNDh9cZQtqb5HkmUuxn0NGRnWIRqk="],
         });
 
         // Budget Alerts via SNS

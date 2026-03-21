@@ -13,7 +13,10 @@ const env = {
 
 const platform = new PlatformStack(app, "PlatformStack", { env });
 
-const hsaReceipts = new HsaReceiptsStack(app, "HsaReceiptArchiverStack", { env });
+const hsaReceipts = new HsaReceiptsStack(app, "HsaReceiptArchiverStack", {
+    env,
+    hsaZone: platform.hsaZone,
+});
 hsaReceipts.addDependency(platform);
 
 const hsaWeb = new HsaWebStack(app, "HsaWebStack", {
@@ -23,6 +26,8 @@ const hsaWeb = new HsaWebStack(app, "HsaWebStack", {
     distribution: platform.distribution,
     dataBucket: hsaReceipts.bucket,
     processorFunction: hsaReceipts.handler,
+    hsaZone: platform.hsaZone,
+    hsaCertificate: platform.hsaCertificate,
 });
 hsaWeb.addDependency(platform);
 hsaWeb.addDependency(hsaReceipts);

@@ -1,8 +1,10 @@
 import * as cdk from "aws-cdk-lib";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as route53 from "aws-cdk-lib/aws-route53";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import { HsaWebStack } from "../lib/hsa-web-stack";
@@ -24,6 +26,12 @@ function createTestTemplate(): Template {
         handler: "index.handler",
         code: lambda.Code.fromInline("pass"),
     });
+    const hsaZone = new route53.HostedZone(helperStack, "HsaZone", {
+        zoneName: "hsa.corderohq.com",
+    });
+    const hsaCertificate = new acm.Certificate(helperStack, "HsaCert", {
+        domainName: "hsa.corderohq.com",
+    });
 
     const stack = new HsaWebStack(app, "TestHsaWebStack", {
         env,
@@ -32,6 +40,8 @@ function createTestTemplate(): Template {
         distribution,
         dataBucket: bucket,
         processorFunction: fn,
+        hsaZone,
+        hsaCertificate,
     });
 
     return Template.fromStack(stack);
@@ -69,9 +79,9 @@ describe("HsaWebStack", () => {
             });
         });
 
-        test("callback URL points to /hsa/callback.html", () => {
+        test("callback URL points to hsa.corderohq.com/callback.html", () => {
             template.hasResourceProperties("AWS::Cognito::UserPoolClient", {
-                CallbackURLs: Match.arrayWith([Match.objectLike({})]),
+                CallbackURLs: ["https://hsa.corderohq.com/callback.html"],
             });
         });
     });
@@ -208,11 +218,30 @@ describe("HsaWebStack", () => {
             });
         });
 
-        test("allows only a single origin", () => {
+        test("allows only hsa.corderohq.com origin", () => {
             template.hasResourceProperties("AWS::ApiGatewayV2::Api", {
                 CorsConfiguration: Match.objectLike({
-                    AllowOrigins: Match.arrayEquals([Match.objectLike({})]),
+                    AllowOrigins: ["https://hsa.corderohq.com"],
                 }),
+            });
+        });
+    });
+
+    describe("API Gateway — custom domain", () => {
+        test("api.hsa.corderohq.com domain exists", () => {
+            template.hasResourceProperties("AWS::ApiGatewayV2::DomainName", {
+                DomainName: "api.hsa.corderohq.com",
+            });
+        });
+
+        test("API mapping exists", () => {
+            template.resourceCountIs("AWS::ApiGatewayV2::ApiMapping", 1);
+        });
+
+        test("Route 53 A record for api.hsa.corderohq.com", () => {
+            template.hasResourceProperties("AWS::Route53::RecordSet", {
+                Name: "api.hsa.corderohq.com.",
+                Type: "A",
             });
         });
     });

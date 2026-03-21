@@ -1,4 +1,5 @@
 import * as cdk from "aws-cdk-lib";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as apigatewayv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigatewayv2Authorizers from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import * as apigatewayv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
@@ -6,10 +7,15 @@ import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
+import * as route53 from "aws-cdk-lib/aws-route53";
+import * as route53Targets from "aws-cdk-lib/aws-route53-targets";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
 import type { Construct } from "constructs";
 import { PYTHON_WEB_BUNDLING_OPTIONS } from "./lambda-bundling";
+
+const SITE_ORIGIN = "https://hsa.corderohq.com";
+const API_DOMAIN_NAME = "api.hsa.corderohq.com";
 
 interface HsaWebStackProps extends cdk.StackProps {
     readonly userPool: cognito.IUserPool;
@@ -17,6 +23,8 @@ interface HsaWebStackProps extends cdk.StackProps {
     readonly distribution: cloudfront.IDistribution;
     readonly dataBucket: s3.IBucket;
     readonly processorFunction: lambda.IFunction;
+    readonly hsaZone: route53.IHostedZone;
+    readonly hsaCertificate: acm.ICertificate;
 }
 
 export class HsaWebStack extends cdk.Stack {
@@ -38,8 +46,8 @@ export class HsaWebStack extends cdk.Stack {
             refreshTokenValidity: cdk.Duration.days(1),
             oAuth: {
                 flows: { authorizationCodeGrant: true },
-                callbackUrls: [`https://${props.distribution.distributionDomainName}/hsa/callback.html`],
-                logoutUrls: [`https://${props.distribution.distributionDomainName}/hsa/`],
+                callbackUrls: [`${SITE_ORIGIN}/callback.html`],
+                logoutUrls: [`${SITE_ORIGIN}/`],
                 scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL],
             },
         });
@@ -84,7 +92,7 @@ export class HsaWebStack extends cdk.Stack {
             description: "HSA Receipts Web API",
             defaultAuthorizer: authorizer,
             corsPreflight: {
-                allowOrigins: [`https://${props.distribution.distributionDomainName}`],
+                allowOrigins: [SITE_ORIGIN],
                 allowMethods: [
                     apigatewayv2.CorsHttpMethod.GET,
                     apigatewayv2.CorsHttpMethod.PUT,
@@ -114,18 +122,45 @@ export class HsaWebStack extends cdk.Stack {
             integration: httpIntegration,
         });
 
+        // API Gateway custom domain — api.hsa.corderohq.com
+        const apiDomain = new apigatewayv2.DomainName(this, "ApiDomainName", {
+            domainName: API_DOMAIN_NAME,
+            certificate: props.hsaCertificate,
+        });
+
+        new apigatewayv2.ApiMapping(this, "ApiMapping", {
+            api: httpApi,
+            domainName: apiDomain,
+        });
+
+        new route53.ARecord(this, "ApiDnsRecord", {
+            zone: props.hsaZone,
+            recordName: API_DOMAIN_NAME,
+            target: route53.RecordTarget.fromAlias(
+                new route53Targets.ApiGatewayv2DomainProperties(
+                    apiDomain.regionalDomainName,
+                    apiDomain.regionalHostedZoneId,
+                ),
+            ),
+        });
+
         // Deploy static web files to the shared assets bucket
         new s3deploy.BucketDeployment(this, "WebAssets", {
             sources: [s3deploy.Source.asset("../web")],
             destinationBucket: props.assetsBucket,
             destinationKeyPrefix: "hsa",
             distribution: props.distribution,
-            distributionPaths: ["/hsa/*"],
+            distributionPaths: ["/*"],
         });
 
-        // Outputs needed by the web UI JavaScript
+        // Outputs
+        new cdk.CfnOutput(this, "SiteUrl", {
+            value: SITE_ORIGIN,
+            description: "HSA web app URL",
+        });
+
         new cdk.CfnOutput(this, "ApiEndpoint", {
-            value: httpApi.apiEndpoint,
+            value: `https://${API_DOMAIN_NAME}`,
             description: "HSA Web API endpoint URL",
         });
 

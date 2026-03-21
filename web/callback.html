@@ -13,7 +13,7 @@
         (async function () {
             const ok = await handleCallback();
             if (ok) {
-                window.location.href = CONFIG.appUrl + "/hsa/";
+                window.location.href = CONFIG.appUrl + "/";
             } else {
                 document.body.innerHTML = "<p>Sign-in failed. <a href=\"" + CONFIG.appUrl + CONFIG.logoutPath + "\">Try again</a></p>";
             }
