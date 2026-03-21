@@ -22,6 +22,7 @@ const hsaWeb = new HsaWebStack(app, "HsaWebStack", {
     assetsBucket: platform.assetsBucket,
     distribution: platform.distribution,
     dataBucket: hsaReceipts.bucket,
+    processorFunction: hsaReceipts.handler,
 });
 hsaWeb.addDependency(platform);
 hsaWeb.addDependency(hsaReceipts);

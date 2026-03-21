@@ -14,6 +14,7 @@ const DOMAIN_NAME = "hsa.corderohq.com";
 
 export class HsaReceiptsStack extends cdk.Stack {
     readonly bucket: s3.Bucket;
+    readonly handler: lambda.Function;
 
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
@@ -58,10 +59,10 @@ export class HsaReceiptsStack extends cdk.Stack {
         });
 
         // Lambda Function
-        const handler = new lambda.Function(this, "ReceiptArchiver", {
+        this.handler = new lambda.Function(this, "ReceiptArchiver", {
             functionName: "hsa-receipt-archiver",
             runtime: lambda.Runtime.PYTHON_3_13,
-            handler: "hsa_receipt_archiver.handler.process_receipt",
+            handler: "hsa_receipt_archiver.receipt_handler.process_receipt",
             code: lambda.Code.fromAsset("../lambda", {
                 bundling: PYTHON_BUNDLING_OPTIONS,
             }),
@@ -80,9 +81,9 @@ export class HsaReceiptsStack extends cdk.Stack {
         });
 
         // IAM Permissions
-        this.bucket.grantReadWrite(handler);
+        this.bucket.grantReadWrite(this.handler);
 
-        handler.addToRolePolicy(
+        this.handler.addToRolePolicy(
             new iam.PolicyStatement({
                 actions: ["ssm:GetParameter"],
                 resources: [
@@ -98,8 +99,8 @@ export class HsaReceiptsStack extends cdk.Stack {
             }),
         );
 
-        notificationTopic.grantPublish(handler);
-        detailedFailureTopic.grantPublish(handler);
+        notificationTopic.grantPublish(this.handler);
+        detailedFailureTopic.grantPublish(this.handler);
 
         // SES Receipt Rule Set + Rule
         const ruleSet = new ses.ReceiptRuleSet(this, "ReceiptRuleSet", {
@@ -114,7 +115,7 @@ export class HsaReceiptsStack extends cdk.Stack {
                     objectKeyPrefix: "raw-emails/",
                 }),
                 new sesActions.Lambda({
-                    function: handler,
+                    function: this.handler,
                 }),
             ],
         });

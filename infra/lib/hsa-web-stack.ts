@@ -16,6 +16,7 @@ interface HsaWebStackProps extends cdk.StackProps {
     readonly assetsBucket: s3.IBucket;
     readonly distribution: cloudfront.IDistribution;
     readonly dataBucket: s3.IBucket;
+    readonly processorFunction: lambda.IFunction;
 }
 
 export class HsaWebStack extends cdk.Stack {
@@ -57,11 +58,13 @@ export class HsaWebStack extends cdk.Stack {
             logGroup,
             environment: {
                 BUCKET_NAME: props.dataBucket.bucketName,
+                PROCESSOR_FUNCTION_NAME: props.processorFunction.functionName,
             },
         });
 
         // IAM Permissions
         props.dataBucket.grantReadWrite(webHandler);
+        props.processorFunction.grantInvoke(webHandler);
 
         // API Gateway HTTP API with Cognito JWT authorizer
         const authorizer = new apigatewayv2Authorizers.HttpUserPoolAuthorizer("CognitoAuthorizer", props.userPool, {
