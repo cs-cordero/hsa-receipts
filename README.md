@@ -1,26 +1,33 @@
-# HSA Receipt Processor
+# HSA Receipt Archiver
 
-Automated HSA receipt processing via email. Send a receipt photo and it gets validated for HSA eligibility, converted to PDF/A, and added to a ledger.
+Automated HSA receipt processing and archival. Receipts can be submitted via email or a web UI, and the system validates HSA eligibility using Claude AI, converts documents to PDF/A for long-term storage, and maintains a CSV ledger of all entries.
+
+See `docs/architecture.md` for how the system works and `docs/user_guide.md` for setup and usage.
 
 ## Project Structure
 
-- `infra/` — AWS CDK stack (TypeScript)
-- `lambda/` — Lambda function code (Python 3.13)
-
-## Setup
-
-### Lambda (Python)
-
-```bash
-cd lambda
-uv sync
+```
+infra/       AWS CDK infrastructure (TypeScript)
+lambda/      Lambda functions (Python 3.13)
+web/         Static web UI (HTML/CSS/JS)
+docs/        Documentation
 ```
 
-### Infrastructure (CDK)
+## Quick Start
 
 ```bash
-cd infra
-npm install
+# Install CDK dependencies
+cd infra && npm install
+
+# Install Lambda dependencies
+cd lambda && uv sync
+
+# Run tests
+cd lambda && uv run pytest
+cd infra && npm test
+
+# Deploy
+cd infra && npx cdk deploy --all
 ```
 
 ## Linting & Type Checking
