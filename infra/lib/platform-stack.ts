@@ -7,51 +7,71 @@ import * as route53 from "aws-cdk-lib/aws-route53";
 import * as route53Targets from "aws-cdk-lib/aws-route53-targets";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import type { Construct } from "constructs";
+import { AUTH_DOMAIN, HSA_DOMAIN } from "./constants";
 
+/**
+ * Shared platform infrastructure for all corderohq.com apps.
+ *
+ * AWS resources:
+ * - Route 53 hosted zone: hsa.corderohq.com (delegated from Porkbun)
+ * - Route 53 hosted zone: auth.corderohq.com (delegated from Porkbun)
+ * - ACM certificate: hsa.corderohq.com + *.hsa.corderohq.com (DNS validated)
+ * - ACM certificate: auth.corderohq.com (DNS validated)
+ * - Cognito User Pool: corderohq-users (MFA required, TOTP, no self-signup)
+ * - Cognito User Pool Domain: auth.corderohq.com (custom domain)
+ * - Route 53 A record: auth.corderohq.com → Cognito
+ * - S3 bucket: corderohq-assets (static web assets, shared across apps)
+ * - CloudFront Function: directory-index-rewrite (URL rewriting for clean paths)
+ * - CloudFront distribution: hsa.corderohq.com → S3 /hsa/ (OAC, HTTPS redirect)
+ * - Route 53 A record: hsa.corderohq.com → CloudFront
+ */
 export class PlatformStack extends cdk.Stack {
-    readonly userPool: cognito.UserPool;
-    readonly assetsBucket: s3.Bucket;
-    readonly distribution: cloudfront.Distribution;
-    readonly hsaZone: route53.HostedZone;
-    readonly hsaCertificate: acm.Certificate;
+    userPool!: cognito.UserPool;
+    assetsBucket!: s3.Bucket;
+    distribution!: cloudfront.Distribution;
+    hsaZone!: route53.HostedZone;
+    hsaCertificate!: acm.Certificate;
 
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
 
         cdk.Tags.of(this).add("project", "corderohq-platform");
 
-        // Route 53 hosted zones — delegated from Porkbun via NS records
+        const authZone = this.createDnsZones();
+        const authCertificate = this.createCertificates(authZone);
+        const cognitoDomain = this.createCognito(authCertificate);
+        this.createCloudFront();
+        this.createDnsRecords(authZone, cognitoDomain);
+    }
+
+    private createDnsZones(): route53.HostedZone {
         this.hsaZone = new route53.HostedZone(this, "HsaZone", {
-            zoneName: "hsa.corderohq.com",
+            zoneName: HSA_DOMAIN,
         });
 
         const authZone = new route53.HostedZone(this, "AuthZone", {
-            zoneName: "auth.corderohq.com",
+            zoneName: AUTH_DOMAIN,
         });
 
-        new cdk.CfnOutput(this, "HsaZoneNameServers", {
-            value: cdk.Fn.join(", ", this.hsaZone.hostedZoneNameServers ?? []),
-            description: "NS records to configure at Porkbun for hsa.corderohq.com",
-        });
+        return authZone;
+    }
 
-        new cdk.CfnOutput(this, "AuthZoneNameServers", {
-            value: cdk.Fn.join(", ", authZone.hostedZoneNameServers ?? []),
-            description: "NS records to configure at Porkbun for auth.corderohq.com",
-        });
-
-        // ACM certificates — DNS validated via Route 53
+    private createCertificates(authZone: route53.HostedZone): acm.Certificate {
         this.hsaCertificate = new acm.Certificate(this, "HsaCertificate", {
-            domainName: "hsa.corderohq.com",
-            subjectAlternativeNames: ["*.hsa.corderohq.com"],
+            domainName: HSA_DOMAIN,
+            subjectAlternativeNames: [`*.${HSA_DOMAIN}`],
             validation: acm.CertificateValidation.fromDns(this.hsaZone),
         });
 
         const authCertificate = new acm.Certificate(this, "AuthCertificate", {
-            domainName: "auth.corderohq.com",
+            domainName: AUTH_DOMAIN,
             validation: acm.CertificateValidation.fromDns(authZone),
         });
 
-        // Cognito User Pool — shared authentication for all corderohq.com apps
+        return authCertificate;
+    }
+
+    private createCognito(authCertificate: acm.Certificate): cognito.UserPoolDomain {
         this.userPool = new cognito.UserPool(this, "UserPool", {
             userPoolName: "corderohq-users",
             selfSignUpEnabled: false,
@@ -75,20 +95,15 @@ export class PlatformStack extends cdk.Stack {
             deletionProtection: true,
         });
 
-        // Cognito custom domain — auth.corderohq.com
-        const cognitoDomain = this.userPool.addDomain("CustomDomain", {
+        return this.userPool.addDomain("CustomDomain", {
             customDomain: {
-                domainName: "auth.corderohq.com",
+                domainName: AUTH_DOMAIN,
                 certificate: authCertificate,
             },
         });
+    }
 
-        new route53.ARecord(this, "AuthCognitoAlias", {
-            zone: authZone,
-            recordName: "auth.corderohq.com",
-            target: route53.RecordTarget.fromAlias(new route53Targets.UserPoolDomainTarget(cognitoDomain)),
-        });
-
+    private createCloudFront(): void {
         // S3 bucket for static web assets — shared across all apps
         // Each app deploys to its own key prefix (e.g., hsa/, budget/)
         this.assetsBucket = new s3.Bucket(this, "AssetsBucket", {
@@ -133,13 +148,21 @@ export class PlatformStack extends cdk.Stack {
             },
             defaultRootObject: "index.html",
             priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
-            domainNames: ["hsa.corderohq.com"],
+            domainNames: [HSA_DOMAIN],
             certificate: this.hsaCertificate,
+        });
+    }
+
+    private createDnsRecords(authZone: route53.HostedZone, cognitoDomain: cognito.UserPoolDomain): void {
+        new route53.ARecord(this, "AuthCognitoAlias", {
+            zone: authZone,
+            recordName: AUTH_DOMAIN,
+            target: route53.RecordTarget.fromAlias(new route53Targets.UserPoolDomainTarget(cognitoDomain)),
         });
 
         new route53.ARecord(this, "HsaCloudFrontAlias", {
             zone: this.hsaZone,
-            recordName: "hsa.corderohq.com",
+            recordName: HSA_DOMAIN,
             target: route53.RecordTarget.fromAlias(new route53Targets.CloudFrontTarget(this.distribution)),
         });
     }

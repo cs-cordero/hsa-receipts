@@ -12,10 +12,7 @@ import * as route53Targets from "aws-cdk-lib/aws-route53-targets";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
 import type { Construct } from "constructs";
-import { PYTHON_WEB_BUNDLING_OPTIONS } from "./lambda-bundling";
-
-const SITE_ORIGIN = "https://hsa.corderohq.com";
-const API_DOMAIN_NAME = "api.hsa.corderohq.com";
+import { API_DOMAIN, HSA_ORIGIN } from "./constants";
 
 interface HsaWebStackProps extends cdk.StackProps {
     readonly userPool: cognito.IUserPool;
@@ -27,6 +24,21 @@ interface HsaWebStackProps extends cdk.StackProps {
     readonly hsaCertificate: acm.ICertificate;
 }
 
+/**
+ * HSA web UI — ledger editor and receipt upload.
+ *
+ * AWS resources:
+ * - Cognito User Pool Client: hsa-web-app (authorization code grant, PKCE)
+ * - CloudWatch log group: /aws/lambda/hsa-web-handler
+ * - Lambda function: hsa-web-handler (Python 3.13, boto3 only)
+ * - IAM policy: S3 read/write on data bucket, Lambda invoke on processor
+ * - API Gateway HTTP API: hsa-web-api (Cognito JWT authorizer, CORS)
+ * - API Gateway routes: GET /ledger, PUT /ledger, POST /receipt
+ * - API Gateway custom domain: api.hsa.corderohq.com
+ * - API Gateway API mapping: api.hsa.corderohq.com → hsa-web-api
+ * - Route 53 A record: api.hsa.corderohq.com → API Gateway
+ * - S3 BucketDeployment: web/ → assets bucket hsa/ prefix (CloudFront invalidation)
+ */
 export class HsaWebStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props: HsaWebStackProps) {
         super(scope, id, props);
@@ -46,8 +58,8 @@ export class HsaWebStack extends cdk.Stack {
             refreshTokenValidity: cdk.Duration.days(1),
             oAuth: {
                 flows: { authorizationCodeGrant: true },
-                callbackUrls: [`${SITE_ORIGIN}/callback.html`],
-                logoutUrls: [`${SITE_ORIGIN}/`],
+                callbackUrls: [`${HSA_ORIGIN}/callback.html`],
+                logoutUrls: [`${HSA_ORIGIN}/`],
                 scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL],
             },
         });
@@ -65,7 +77,18 @@ export class HsaWebStack extends cdk.Stack {
             runtime: lambda.Runtime.PYTHON_3_13,
             handler: "hsa_receipt_archiver.web_handler.handle",
             code: lambda.Code.fromAsset("../lambda", {
-                bundling: PYTHON_WEB_BUNDLING_OPTIONS,
+                bundling: {
+                    image: lambda.Runtime.PYTHON_3_13.bundlingImage,
+                    user: "root",
+                    command: [
+                        "bash",
+                        "-c",
+                        [
+                            "pip install -r requirements-web.txt -t /asset-output",
+                            "cp -r src/hsa_receipt_archiver /asset-output/",
+                        ].join(" && "),
+                    ],
+                },
             }),
             memorySize: 1024,
             timeout: cdk.Duration.minutes(5),
@@ -92,7 +115,7 @@ export class HsaWebStack extends cdk.Stack {
             description: "HSA Receipts Web API",
             defaultAuthorizer: authorizer,
             corsPreflight: {
-                allowOrigins: [SITE_ORIGIN],
+                allowOrigins: [HSA_ORIGIN],
                 allowMethods: [
                     apigatewayv2.CorsHttpMethod.GET,
                     apigatewayv2.CorsHttpMethod.PUT,
@@ -124,7 +147,7 @@ export class HsaWebStack extends cdk.Stack {
 
         // API Gateway custom domain — api.hsa.corderohq.com
         const apiDomain = new apigatewayv2.DomainName(this, "ApiDomainName", {
-            domainName: API_DOMAIN_NAME,
+            domainName: API_DOMAIN,
             certificate: props.hsaCertificate,
         });
 
@@ -133,16 +156,7 @@ export class HsaWebStack extends cdk.Stack {
             domainName: apiDomain,
         });
 
-        new route53.ARecord(this, "ApiDnsRecord", {
-            zone: props.hsaZone,
-            recordName: API_DOMAIN_NAME,
-            target: route53.RecordTarget.fromAlias(
-                new route53Targets.ApiGatewayv2DomainProperties(
-                    apiDomain.regionalDomainName,
-                    apiDomain.regionalHostedZoneId,
-                ),
-            ),
-        });
+        this.createDnsRecords(props.hsaZone, apiDomain);
 
         // Deploy static web files to the shared assets bucket
         new s3deploy.BucketDeployment(this, "WebAssets", {
@@ -152,21 +166,18 @@ export class HsaWebStack extends cdk.Stack {
             distribution: props.distribution,
             distributionPaths: ["/*"],
         });
+    }
 
-        // Outputs
-        new cdk.CfnOutput(this, "SiteUrl", {
-            value: SITE_ORIGIN,
-            description: "HSA web app URL",
-        });
-
-        new cdk.CfnOutput(this, "ApiEndpoint", {
-            value: `https://${API_DOMAIN_NAME}`,
-            description: "HSA Web API endpoint URL",
-        });
-
-        new cdk.CfnOutput(this, "UserPoolClientId", {
-            value: userPoolClient.userPoolClientId,
-            description: "Cognito User Pool Client ID for the HSA web app",
+    private createDnsRecords(hsaZone: route53.IHostedZone, apiDomain: apigatewayv2.DomainName): void {
+        new route53.ARecord(this, "ApiDnsRecord", {
+            zone: hsaZone,
+            recordName: API_DOMAIN,
+            target: route53.RecordTarget.fromAlias(
+                new route53Targets.ApiGatewayv2DomainProperties(
+                    apiDomain.regionalDomainName,
+                    apiDomain.regionalHostedZoneId,
+                ),
+            ),
         });
     }
 }

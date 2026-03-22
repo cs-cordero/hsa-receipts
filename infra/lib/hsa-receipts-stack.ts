@@ -9,14 +9,29 @@ import * as ses from "aws-cdk-lib/aws-ses";
 import * as sesActions from "aws-cdk-lib/aws-ses-actions";
 import * as sns from "aws-cdk-lib/aws-sns";
 import type { Construct } from "constructs";
-import { PYTHON_BUNDLING_OPTIONS } from "./lambda-bundling";
-
-const DOMAIN_NAME = "hsa.corderohq.com";
+import { HSA_DOMAIN } from "./constants";
 
 interface HsaReceiptsStackProps extends cdk.StackProps {
     readonly hsaZone: route53.IHostedZone;
 }
 
+/**
+ * HSA receipt processing via email (SES inbound).
+ *
+ * AWS resources:
+ * - S3 bucket: hsa-receipts (versioned, lifecycle rules for raw-emails/)
+ * - CloudWatch log group: /aws/lambda/hsa-receipt-archiver
+ * - SNS topic: hsa-receipt-archiver-notifications
+ * - SNS topic: hsa-receipt-archiver-detailed-failures
+ * - Lambda function: hsa-receipt-archiver (Python 3.13, Ghostscript bundled)
+ * - IAM policy: S3 read/write, SSM GetParameter, SNS Publish
+ * - SES receipt rule set: hsa-receipt-archiver
+ * - SES receipt rule: receipts@hsa.corderohq.com → S3 + Lambda
+ * - Route 53 MX record: hsa.corderohq.com → inbound-smtp.us-east-1.amazonaws.com
+ * - Route 53 TXT record: _amazonses.hsa.corderohq.com (SES domain verification)
+ * - SNS topic: hsa-receipt-archiver-budget-alerts
+ * - Budget: hsa-receipt-archiver-monthly ($10 USD, alerts at 50/80/100%)
+ */
 export class HsaReceiptsStack extends cdk.Stack {
     readonly bucket: s3.Bucket;
     readonly handler: lambda.Function;
@@ -69,7 +84,23 @@ export class HsaReceiptsStack extends cdk.Stack {
             runtime: lambda.Runtime.PYTHON_3_13,
             handler: "hsa_receipt_archiver.receipt_handler.process_receipt",
             code: lambda.Code.fromAsset("../lambda", {
-                bundling: PYTHON_BUNDLING_OPTIONS,
+                bundling: {
+                    image: lambda.Runtime.PYTHON_3_13.bundlingImage,
+                    user: "root",
+                    command: [
+                        "bash",
+                        "-c",
+                        [
+                            "dnf install -y ghostscript",
+                            "pip install -r requirements.txt -t /asset-output",
+                            "cp -r src/hsa_receipt_archiver /asset-output/",
+                            "mkdir -p /asset-output/bin /asset-output/lib",
+                            "cp /usr/bin/gs /asset-output/bin/gs",
+                            "ldd /usr/bin/gs | awk '/=>/ {print $3}' | xargs -I{} cp {} /asset-output/lib/",
+                            "cp -rL /usr/share/ghostscript /asset-output/share/",
+                        ].join(" && "),
+                    ],
+                },
             }),
             memorySize: 1024,
             timeout: cdk.Duration.minutes(5),
@@ -113,7 +144,7 @@ export class HsaReceiptsStack extends cdk.Stack {
         });
 
         ruleSet.addRule("ReceiptRule", {
-            recipients: [`receipts@${DOMAIN_NAME}`],
+            recipients: [`receipts@${HSA_DOMAIN}`],
             actions: [
                 new sesActions.S3({
                     bucket: this.bucket,
@@ -125,19 +156,26 @@ export class HsaReceiptsStack extends cdk.Stack {
             ],
         });
 
-        // SES MX record in Route 53 — enables email receiving at receipts@hsa.corderohq.com
+        this.createDnsRecords(props.hsaZone);
+        this.createBudgetAlerts();
+    }
+
+    private createDnsRecords(hsaZone: route53.IHostedZone): void {
+        // SES MX record in Route 53
         new route53.MxRecord(this, "SesMxRecord", {
-            zone: props.hsaZone,
+            zone: hsaZone,
             values: [{ priority: 10, hostName: "inbound-smtp.us-east-1.amazonaws.com" }],
         });
 
-        // SES domain verification TXT record — migrated from Porkbun
+        // SES domain verification TXT record
         new route53.TxtRecord(this, "SesTxtRecord", {
-            zone: props.hsaZone,
-            recordName: "_amazonses.hsa.corderohq.com",
+            zone: hsaZone,
+            recordName: `_amazonses.${HSA_DOMAIN}`,
             values: ["YonxACp7We9tgvwNDh9cZQtqb5HkmUuxn0NGRnWIRqk="],
         });
+    }
 
+    private createBudgetAlerts(): void {
         // Budget Alerts via SNS
         const budgetTopic = new sns.Topic(this, "BudgetAlertsTopic", {
             topicName: "hsa-receipt-archiver-budget-alerts",
