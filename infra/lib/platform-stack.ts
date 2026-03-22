@@ -98,20 +98,22 @@ export class PlatformStack extends cdk.Stack {
             removalPolicy: cdk.RemovalPolicy.RETAIN,
         });
 
-        // CloudFront Function — rewrite directory requests to index.html
-        const indexRewriteCode = [
+        // CloudFront Function — rewrite directory and extensionless paths
+        const urlRewriteCode = [
             "function handler(event) {",
             "    var request = event.request;",
             '    if (request.uri.endsWith("/")) {',
             '        request.uri += "index.html";',
+            '    } else if (request.uri.lastIndexOf(".") <= request.uri.lastIndexOf("/")) {',
+            '        request.uri += ".html";',
             "    }",
             "    return request;",
             "}",
         ].join("\n");
 
-        const indexRewrite = new cloudfront.Function(this, "IndexRewriteFunction", {
+        const urlRewrite = new cloudfront.Function(this, "IndexRewriteFunction", {
             functionName: "directory-index-rewrite",
-            code: cloudfront.FunctionCode.fromInline(indexRewriteCode),
+            code: cloudfront.FunctionCode.fromInline(urlRewriteCode),
         });
 
         // CloudFront distribution with OAC to the assets bucket
@@ -124,7 +126,7 @@ export class PlatformStack extends cdk.Stack {
                 viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                 functionAssociations: [
                     {
-                        function: indexRewrite,
+                        function: urlRewrite,
                         eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
                     },
                 ],

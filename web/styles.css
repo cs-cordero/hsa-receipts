@@ -23,6 +23,34 @@ header h1 {
     font-size: 1.25rem;
 }
 
+#header-left {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+}
+
+nav {
+    display: flex;
+    gap: 0.75rem;
+}
+
+nav a {
+    color: rgba(255, 255, 255, 0.7);
+    text-decoration: none;
+    font-size: 0.9rem;
+    padding: 0.25rem 0;
+    border-bottom: 2px solid transparent;
+}
+
+nav a:hover {
+    color: #fff;
+}
+
+nav a.active {
+    color: #fff;
+    border-bottom-color: #fff;
+}
+
 #header-actions {
     display: flex;
     align-items: center;
@@ -140,4 +168,145 @@ header h1 {
 
 .hidden {
     display: none !important;
+}
+
+/* ── Upload Page ─────────────────────────────────────────────────────────────── */
+
+.upload-page {
+    max-width: 800px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+}
+
+.upload-card {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 1.5rem;
+}
+
+.upload-card h2 {
+    margin: 0 0 1rem;
+    font-size: 1.1rem;
+}
+
+.upload-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.upload-form input[type="file"] {
+    font-size: 0.9rem;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    color: #555;
+}
+
+.primary-btn {
+    padding: 0.5rem 1.25rem;
+    border: 1px solid #1d4ed8;
+    border-radius: 4px;
+    background: #2563eb;
+    color: #fff;
+    cursor: pointer;
+    font-size: 0.9rem;
+    align-self: flex-start;
+}
+
+.primary-btn:hover {
+    background: #1d4ed8;
+}
+
+.primary-btn:disabled {
+    background: #93b4f5;
+    border-color: #93b4f5;
+    cursor: not-allowed;
+}
+
+.spinner {
+    width: 24px;
+    height: 24px;
+    border: 3px solid #e0e0e0;
+    border-top-color: #2563eb;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+#upload-status {
+    font-size: 0.85rem;
+}
+
+/* ── Results ─────────────────────────────────────────────────────────────────── */
+
+#results {
+    margin-top: 1.5rem;
+}
+
+.results-section {
+    margin-bottom: 1.5rem;
+}
+
+.results-section h2 {
+    font-size: 1rem;
+    margin: 0 0 0.75rem;
+}
+
+.results-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.results-table th,
+.results-table td {
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    border: 1px solid #ddd;
+}
+
+.results-table th {
+    background: #f0f0f0;
+    font-weight: 600;
+}
+
+.results-table tbody tr:nth-child(even) {
+    background: #fafafa;
+}
+
+.rejection-card {
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.rejection-card strong {
+    font-size: 0.9rem;
+}
+
+.rejection-card p {
+    margin: 0.35rem 0 0;
+    font-size: 0.85rem;
+    color: #555;
+}
+
+.rejection-reasoning {
+    font-style: italic;
+    color: #777 !important;
+}
+
+.no-results {
+    color: #666;
+    font-style: italic;
 }

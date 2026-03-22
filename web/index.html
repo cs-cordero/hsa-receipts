@@ -10,7 +10,13 @@
 </head>
 <body>
     <header>
-        <h1>HSA Receipts</h1>
+        <div id="header-left">
+            <h1>HSA Receipts</h1>
+            <nav>
+                <a href="/" class="active">Ledger</a>
+                <a href="/upload">Upload</a>
+            </nav>
+        </div>
         <div id="header-actions">
             <span id="unsaved-indicator" class="hidden">Unsaved changes</span>
             <button id="sign-out-btn" onclick="signOut()" style="display:none;">Sign Out</button>
