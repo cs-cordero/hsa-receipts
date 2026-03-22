@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HSA Receipts — Orphaned Receipts</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <div id="header-left">
+            <h1>HSA Receipts</h1>
+            <nav>
+                <a href="/">Ledger</a>
+                <a href="/upload">Upload</a>
+                <a href="/orphaned-receipts" class="active">Orphaned</a>
+            </nav>
+        </div>
+        <div id="header-actions">
+            <button id="sign-out-btn" onclick="signOut()" style="display:none;">Sign Out</button>
+        </div>
+    </header>
+    <main class="orphaned-page">
+        <div class="orphaned-controls">
+            <button id="detect-btn" class="primary-btn">Detect Orphaned Receipts</button>
+            <div id="spinner" class="spinner hidden"></div>
+            <span id="detect-status"></span>
+        </div>
+        <div id="placeholder-message">
+            <p>Press Detect to scan for orphaned receipts.</p>
+        </div>
+        <div id="results" class="hidden">
+            <div id="orphaned-section" class="results-section">
+                <h2>Orphaned Receipts</h2>
+                <p class="section-description">Files in S3 not referenced by any ledger row.</p>
+                <div id="orphaned-table-container"></div>
+            </div>
+            <div id="broken-section" class="results-section">
+                <h2>Broken References</h2>
+                <p class="section-description">Ledger rows pointing to S3 files that no longer exist.</p>
+                <div id="broken-table-container"></div>
+            </div>
+        </div>
+    </main>
+    <script src="config.js"></script>
+    <script src="auth.js"></script>
+    <script src="orphaned-receipts.js"></script>
+    <script>
+        (async function () {
+            await initAuth();
+            document.getElementById("sign-out-btn").style.display = "inline";
+            initOrphanedReceipts();
+        })();
+    </script>
+</body>
+</html>

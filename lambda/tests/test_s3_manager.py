@@ -8,8 +8,10 @@ from botocore.exceptions import ClientError
 from hsa_receipt_archiver.aws.s3 import (
     _key_exists,
     _sanitize,
+    delete_object,
     fetch_ledger,
     fetch_raw_email,
+    list_receipt_keys,
     store_ledger,
     store_receipt,
     tag_raw_email,
@@ -128,3 +130,34 @@ def test_sanitize_strips_leading_trailing_underscores() -> None:
 
 def test_sanitize_collapses_multiple_special_chars() -> None:
     assert _sanitize("a!!!b") == "a_b"
+
+
+@patch("hsa_receipt_archiver.aws.s3._S3_CLIENT")
+def test_list_receipt_keys_returns_keys(mock_s3: MagicMock) -> None:
+    paginator = MagicMock()
+    paginator.paginate.return_value = [
+        {"Contents": [{"Key": "receipts/2024/a.pdf"}, {"Key": "receipts/2024/b.pdf"}]},
+        {"Contents": [{"Key": "receipts/2025/c.pdf"}]},
+    ]
+    mock_s3.get_paginator.return_value = paginator
+
+    result = list_receipt_keys("bucket")
+    assert result == ["receipts/2024/a.pdf", "receipts/2024/b.pdf", "receipts/2025/c.pdf"]
+    mock_s3.get_paginator.assert_called_once_with("list_objects_v2")
+    paginator.paginate.assert_called_once_with(Bucket="bucket", Prefix="receipts/")
+
+
+@patch("hsa_receipt_archiver.aws.s3._S3_CLIENT")
+def test_list_receipt_keys_handles_empty_bucket(mock_s3: MagicMock) -> None:
+    paginator = MagicMock()
+    paginator.paginate.return_value = [{}]
+    mock_s3.get_paginator.return_value = paginator
+
+    result = list_receipt_keys("bucket")
+    assert result == []
+
+
+@patch("hsa_receipt_archiver.aws.s3._S3_CLIENT")
+def test_delete_object_calls_s3(mock_s3: MagicMock) -> None:
+    delete_object("bucket", "receipts/2024/file.pdf")
+    mock_s3.delete_object.assert_called_once_with(Bucket="bucket", Key="receipts/2024/file.pdf")

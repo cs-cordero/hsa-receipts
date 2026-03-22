@@ -13,6 +13,7 @@
             <nav>
                 <a href="/">Ledger</a>
                 <a href="/upload" class="active">Upload</a>
+                <a href="/orphaned-receipts">Orphaned</a>
             </nav>
         </div>
         <div id="header-actions">
@@ -27,6 +28,10 @@
                 <label class="checkbox-label">
                     <input type="checkbox" id="force-store">
                     Force store (skip eligibility check)
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" id="store-only">
+                    Store only (archive to S3 without analysis)
                 </label>
                 <button id="upload-btn" class="primary-btn">Upload & Analyze</button>
                 <div id="spinner" class="spinner hidden"></div>

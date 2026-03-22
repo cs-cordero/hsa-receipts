@@ -1,6 +1,8 @@
 """API Gateway Lambda handler for the HSA web UI."""
 
 import base64
+import csv
+import io
 import json
 import logging
 import uuid
@@ -9,7 +11,14 @@ from typing import Any
 import boto3
 
 from hsa_receipt_archiver.archiver.ledger import create_empty_ledger
-from hsa_receipt_archiver.aws.s3 import fetch_ledger, store_ledger, store_upload
+from hsa_receipt_archiver.aws.s3 import (
+    delete_object,
+    fetch_ledger,
+    generate_presigned_receipt_url,
+    list_receipt_keys,
+    store_ledger,
+    store_upload,
+)
 from hsa_receipt_archiver.util import get_env_var
 
 LOGGER = logging.getLogger(__name__)
@@ -46,8 +55,14 @@ def handle(event: dict[str, Any], context: Any) -> dict[str, Any]:
             return _get_ledger()
         elif path == "/ledger" and method == "PUT":
             return _put_ledger(event)
+        elif path == "/receipt" and method == "GET":
+            return _get_receipt(event)
         elif path == "/receipt" and method == "POST":
             return _post_receipt(event)
+        elif path == "/receipt" and method == "DELETE":
+            return _delete_receipt(event)
+        elif path == "/orphaned-receipts" and method == "GET":
+            return _get_orphaned_receipts()
         else:
             return _response(404, "Not found")
     except Exception:
@@ -75,6 +90,18 @@ def _put_ledger(event: dict[str, Any]) -> dict[str, Any]:
     return _csv_response(200, body)
 
 
+def _get_receipt(event: dict[str, Any]) -> dict[str, Any]:
+    key = (event.get("queryStringParameters") or {}).get("key", "")
+    if not key:
+        return _response(400, "query parameter 'key' is required")
+    if not key.startswith("receipts/"):
+        return _response(403, "Access denied")
+
+    bucket = get_env_var("BUCKET_NAME")
+    url = generate_presigned_receipt_url(bucket, key)
+    return _json_response(200, json.dumps({"url": url}))
+
+
 def _post_receipt(event: dict[str, Any]) -> dict[str, Any]:
     raw_body = event.get("body", "")
     if event.get("isBase64Encoded") and raw_body:
@@ -87,6 +114,7 @@ def _post_receipt(event: dict[str, Any]) -> dict[str, Any]:
     content_type = body.get("content_type", "")
     file_data_b64 = body.get("data", "")
     force_store = body.get("force_store", False)
+    store_only = body.get("store_only", False)
 
     if not filename or not content_type or not file_data_b64:
         return _response(400, "filename, content_type, and data are required")
@@ -114,6 +142,7 @@ def _post_receipt(event: dict[str, Any]) -> dict[str, Any]:
                 "content_type": content_type,
                 "filename": filename,
                 "force_store": force_store,
+                "store_only": store_only,
             }
         ),
     )
@@ -123,6 +152,47 @@ def _post_receipt(event: dict[str, Any]) -> dict[str, Any]:
     result_body = result.get("body", "{}")
 
     return _json_response(status, result_body)
+
+
+def _delete_receipt(event: dict[str, Any]) -> dict[str, Any]:
+    key = (event.get("queryStringParameters") or {}).get("key", "")
+    if not key:
+        return _response(400, "query parameter 'key' is required")
+    if not key.startswith("receipts/"):
+        return _response(403, "Access denied")
+
+    bucket = get_env_var("BUCKET_NAME")
+    delete_object(bucket, key)
+    return _json_response(200, json.dumps({"deleted": key}))
+
+
+def _get_orphaned_receipts() -> dict[str, Any]:
+    bucket = get_env_var("BUCKET_NAME")
+
+    receipt_keys = list_receipt_keys(bucket)
+    ledger_csv = fetch_ledger(bucket)
+
+    ledger_uris: set[str] = set()
+    ledger_rows_with_uri: list[dict[str, str]] = []
+    if ledger_csv is not None:
+        reader = csv.DictReader(io.StringIO(ledger_csv))
+        for row in reader:
+            uri = row.get("Receipt S3 URI", "").strip()
+            if uri:
+                ledger_uris.add(uri)
+                ledger_rows_with_uri.append(dict(row))
+
+    s3_uris = {f"s3://{bucket}/{key}" for key in receipt_keys}
+
+    orphaned = sorted(s3_uris - ledger_uris)
+
+    broken: list[dict[str, str]] = []
+    for row in ledger_rows_with_uri:
+        uri = row.get("Receipt S3 URI", "").strip()
+        if uri and uri not in s3_uris:
+            broken.append(row)
+
+    return _json_response(200, json.dumps({"orphaned_receipts": orphaned, "broken_references": broken}))
 
 
 def _csv_response(status: int, body: str) -> dict[str, Any]:

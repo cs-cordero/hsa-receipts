@@ -41,7 +41,7 @@ Respond with a JSON array of objects. Each object must contain exactly these fie
 or null if not determinable
 - "payment_date": string in YYYY-MM-DD format for when the payment was made, \
 or null if not determinable
-- "patient": string (name of the patient the service was performed for) or null if not visible
+- "patient": one of "CHRIS", "JILLIAN", "KAYA", "MATEO", or "UNKNOWN" if the patient cannot be determined
 - "reasoning": string explaining your determination
 
 If the document contains only one transaction, still return a JSON array with one element.

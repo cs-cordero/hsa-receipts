@@ -90,6 +90,25 @@ function amountFormatter(params) {
     return "$" + params.value;
 }
 
+// ── Receipt Link ────────────────────────────────────────────────────────────────
+
+async function openReceiptLink(s3Uri) {
+    // Extract key from "s3://bucket/receipts/..." → "receipts/..."
+    var match = s3Uri.match(/^s3:\/\/[^/]+\/(.+)$/);
+    if (!match) return;
+
+    var token = await getAccessToken();
+    var response = await fetch(CONFIG.apiEndpoint + "/receipt?key=" + encodeURIComponent(match[1]), {
+        headers: { "Authorization": "Bearer " + token },
+    });
+    if (!response.ok) {
+        alert("Failed to get receipt URL: " + response.status);
+        return;
+    }
+    var data = await response.json();
+    window.open(data.url, "_blank");
+}
+
 // ── Column Definitions ──────────────────────────────────────────────────────────
 
 function getColumnDefs() {
@@ -125,6 +144,10 @@ function getColumnDefs() {
             editable: true,
             width: 130,
             cellDataType: "text",
+            cellEditor: "agSelectCellEditor",
+            cellEditorParams: {
+                values: ["CHRIS", "JILLIAN", "KAYA", "MATEO", "UNKNOWN"],
+            },
         },
         {
             field: "Category",
@@ -156,9 +179,28 @@ function getColumnDefs() {
         },
         {
             field: "Receipt S3 URI",
-            editable: false,
+            editable: true,
             width: 200,
             cellDataType: "text",
+        },
+        {
+            headerName: "Receipt",
+            editable: false,
+            width: 90,
+            sortable: false,
+            filter: false,
+            cellRenderer: function (params) {
+                var uri = params.data["Receipt S3 URI"];
+                if (!uri) return "";
+                var link = document.createElement("a");
+                link.textContent = "Download";
+                link.href = "#";
+                link.addEventListener("click", function (e) {
+                    e.preventDefault();
+                    openReceiptLink(uri);
+                });
+                return link;
+            },
         },
         {
             field: "Reimbursed",
@@ -177,11 +219,17 @@ function getColumnDefs() {
             cellDataType: "text",
         },
         {
-            field: "Prob. of Duplicate",
+            headerName: "Dup. %",
             editable: false,
             width: 100,
             cellDataType: "text",
-            headerName: "Dup. %",
+            valueGetter: function (params) {
+                return params.data["Prob. of Duplicate"];
+            },
+            valueSetter: function (params) {
+                params.data["Prob. of Duplicate"] = params.newValue;
+                return true;
+            },
         },
     ];
 }
@@ -287,6 +335,18 @@ async function handleSave() {
     }
 }
 
+function handleDownload() {
+    const allData = getAllRowData();
+    const csvString = serializeCsv(allData);
+    const blob = new Blob([csvString], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "hsa-receipts.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
 // ── Status ──────────────────────────────────────────────────────────────────────
 
 function showStatus(message, type) {
@@ -307,6 +367,7 @@ async function initLedger() {
     document.getElementById("add-row-btn").addEventListener("click", addRow);
     document.getElementById("delete-rows-btn").addEventListener("click", deleteSelectedRows);
     document.getElementById("save-btn").addEventListener("click", handleSave);
+    document.getElementById("download-btn").addEventListener("click", handleDownload);
 
     window.addEventListener("beforeunload", function (e) {
         if (isDirty) {

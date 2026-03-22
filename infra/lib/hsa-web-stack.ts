@@ -33,7 +33,7 @@ interface HsaWebStackProps extends cdk.StackProps {
  * - Lambda function: hsa-web-handler (Python 3.13, boto3 only)
  * - IAM policy: S3 read/write on data bucket, Lambda invoke on processor
  * - API Gateway HTTP API: hsa-web-api (Cognito JWT authorizer, CORS)
- * - API Gateway routes: GET /ledger, PUT /ledger, POST /receipt
+ * - API Gateway routes: GET /ledger, PUT /ledger, GET /receipt, POST /receipt, DELETE /receipt, GET /orphaned-receipts
  * - API Gateway custom domain: api.hsa.corderohq.com
  * - API Gateway API mapping: api.hsa.corderohq.com → hsa-web-api
  * - Route 53 A record: api.hsa.corderohq.com → API Gateway
@@ -140,6 +140,7 @@ export class HsaWebStack extends cdk.Stack {
                     apigatewayv2.CorsHttpMethod.GET,
                     apigatewayv2.CorsHttpMethod.PUT,
                     apigatewayv2.CorsHttpMethod.POST,
+                    apigatewayv2.CorsHttpMethod.DELETE,
                     apigatewayv2.CorsHttpMethod.OPTIONS,
                 ],
                 allowHeaders: ["Authorization", "Content-Type"],
@@ -161,7 +162,25 @@ export class HsaWebStack extends cdk.Stack {
 
         httpApi.addRoutes({
             path: "/receipt",
+            methods: [apigatewayv2.HttpMethod.GET],
+            integration: httpIntegration,
+        });
+
+        httpApi.addRoutes({
+            path: "/receipt",
             methods: [apigatewayv2.HttpMethod.POST],
+            integration: httpIntegration,
+        });
+
+        httpApi.addRoutes({
+            path: "/receipt",
+            methods: [apigatewayv2.HttpMethod.DELETE],
+            integration: httpIntegration,
+        });
+
+        httpApi.addRoutes({
+            path: "/orphaned-receipts",
+            methods: [apigatewayv2.HttpMethod.GET],
             integration: httpIntegration,
         });
 

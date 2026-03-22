@@ -15,6 +15,7 @@ LOGGER = logging.getLogger(__name__)
 MAX_PAGES_ALLOWED = 10
 MAX_TRANSACTIONS_PER_RECEIPT = 3
 EARLIEST_ELIGIBLE_DATE = date(2025, 1, 27)
+VALID_PATIENTS = frozenset({"CHRIS", "JILLIAN", "KAYA", "MATEO", "UNKNOWN"})
 
 
 @dataclass
@@ -42,11 +43,15 @@ def process_attachment(
     force_store: bool,
     api_key: str,
     bucket: str,
+    store_only: bool = False,
 ) -> ProcessingResult:
     """Analyze a receipt, convert to PDF/A, store in S3, and update the ledger.
 
     Does NOT send notifications — the caller decides how to notify.
     """
+    if store_only:
+        return _store_only(data, content_type, filename, bucket)
+
     results = _analyze_receipt(api_key, data, content_type)
 
     if len(results) > MAX_TRANSACTIONS_PER_RECEIPT:
@@ -105,7 +110,7 @@ def process_attachment(
             service_date=service_date,
             payment_date=payment_date,
             provider=result.provider or "Unknown",
-            patient=result.patient or "",
+            patient=result.patient if result.patient in VALID_PATIENTS else "UNKNOWN",
             category=result.category,
             description=result.description,
             amount=result.amount or 0.0,
@@ -120,6 +125,15 @@ def process_attachment(
         LOGGER.info("Archived receipt: %s at %s", result.description, receipt_uri)
 
     return ProcessingResult(entries=entries, rejections=rejections, receipt_s3_uri=receipt_uri)
+
+
+def _store_only(data: bytes, content_type: str, filename: str, bucket: str) -> ProcessingResult:
+    """Convert to PDF/A and store in S3 without Claude analysis or ledger update."""
+    pdf_data = convert_to_pdfa(data, content_type)
+    name_stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+    receipt_uri = store_receipt(bucket, pdf_data, today().isoformat(), "Manual", name_stem)
+    LOGGER.info("Store-only: archived %s at %s", filename, receipt_uri)
+    return ProcessingResult(entries=[], rejections=[], receipt_s3_uri=receipt_uri)
 
 
 def _analyze_receipt(api_key: str, data: bytes, content_type: str) -> list[EligibilityResult]:

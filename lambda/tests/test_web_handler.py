@@ -19,6 +19,7 @@ def _make_event(
     body: str | None = None,
     base64_encode: bool = False,
     email: str = "user@example.com",
+    query_params: dict[str, str] | None = None,
 ) -> dict:
     event: dict = {
         "requestContext": {
@@ -29,6 +30,8 @@ def _make_event(
         "isBase64Encoded": base64_encode,
         "body": None,
     }
+    if query_params is not None:
+        event["queryStringParameters"] = query_params
     if body is not None:
         if base64_encode:
             event["body"] = base64.b64encode(body.encode("utf-8")).decode("ascii")
@@ -171,6 +174,125 @@ class TestPostReceipt:
         upload_key = mock_upload.call_args[0][1]
         assert upload_key.startswith("raw-uploads/")
         assert upload_key.endswith(".pdf")
+
+    @patch.dict(os.environ, ENV_VARS)
+    @patch("hsa_receipt_archiver.web_handler._LAMBDA_CLIENT")
+    @patch("hsa_receipt_archiver.web_handler.store_upload")
+    def test_store_only_flag_passed_to_processor(self, mock_upload: MagicMock, mock_lambda: MagicMock) -> None:
+        mock_payload = MagicMock()
+        mock_payload.read.return_value = json.dumps(
+            {"statusCode": 200, "body": '{"receipt_s3_uri": "s3://b/r.pdf"}'}
+        ).encode()
+        mock_lambda.invoke.return_value = {"Payload": mock_payload}
+
+        body = self._make_receipt_body(store_only=True)
+        handle(_make_event("POST", "/receipt", body=body), None)
+
+        payload = json.loads(mock_lambda.invoke.call_args[1]["Payload"])
+        assert payload["store_only"] is True
+
+
+class TestGetReceipt:
+    @patch.dict(os.environ, ENV_VARS)
+    @patch(
+        "hsa_receipt_archiver.web_handler.generate_presigned_receipt_url",
+        return_value="https://s3.amazonaws.com/presigned",
+    )
+    def test_returns_presigned_url(self, mock_presign: MagicMock) -> None:
+        event = _make_event("GET", "/receipt", query_params={"key": "receipts/2025/file.pdf"})
+        result = handle(event, None)
+
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        assert body["url"] == "https://s3.amazonaws.com/presigned"
+        mock_presign.assert_called_once_with("test-bucket", "receipts/2025/file.pdf")
+
+    @patch.dict(os.environ, ENV_VARS)
+    def test_invalid_prefix_returns_403(self) -> None:
+        event = _make_event("GET", "/receipt", query_params={"key": "raw-emails/something"})
+        result = handle(event, None)
+
+        assert result["statusCode"] == 403
+
+    @patch.dict(os.environ, ENV_VARS)
+    def test_missing_key_returns_400(self) -> None:
+        event = _make_event("GET", "/receipt")
+        result = handle(event, None)
+
+        assert result["statusCode"] == 400
+
+
+class TestDeleteReceipt:
+    @patch.dict(os.environ, ENV_VARS)
+    @patch("hsa_receipt_archiver.web_handler.delete_object")
+    def test_deletes_receipt(self, mock_delete: MagicMock) -> None:
+        event = _make_event("DELETE", "/receipt", query_params={"key": "receipts/2024/file.pdf"})
+        result = handle(event, None)
+
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        assert body["deleted"] == "receipts/2024/file.pdf"
+        mock_delete.assert_called_once_with("test-bucket", "receipts/2024/file.pdf")
+
+    @patch.dict(os.environ, ENV_VARS)
+    def test_missing_key_returns_400(self) -> None:
+        event = _make_event("DELETE", "/receipt")
+        result = handle(event, None)
+
+        assert result["statusCode"] == 400
+
+    @patch.dict(os.environ, ENV_VARS)
+    def test_invalid_prefix_returns_403(self) -> None:
+        event = _make_event("DELETE", "/receipt", query_params={"key": "raw-emails/something"})
+        result = handle(event, None)
+
+        assert result["statusCode"] == 403
+
+
+class TestGetOrphanedReceipts:
+    LEDGER_WITH_URIS = (
+        "Id,Service Date,Payment Date,Vendor/Provider,Patient/For,Category,"
+        "Description,Amount,Receipt S3 URI,Reimbursed,Notes,Prob. of Duplicate\n"
+        "1,2024-01-01,2024-01-02,Dr. Smith,CHRIS,Medical,Visit,100.00,"
+        "s3://test-bucket/receipts/2024/exists.pdf,No,,\n"
+        "2,2024-06-01,2024-06-02,Dr. Jones,CHRIS,Dental,Cleaning,200.00,"
+        "s3://test-bucket/receipts/2024/missing.pdf,No,,\n"
+    )
+
+    @patch.dict(os.environ, ENV_VARS)
+    @patch(
+        "hsa_receipt_archiver.web_handler.list_receipt_keys",
+        return_value=["receipts/2024/exists.pdf", "receipts/2024/orphan.pdf"],
+    )
+    @patch("hsa_receipt_archiver.web_handler.fetch_ledger")
+    def test_returns_orphaned_and_broken(self, mock_fetch: MagicMock, mock_list: MagicMock) -> None:
+        mock_fetch.return_value = self.LEDGER_WITH_URIS
+        result = handle(_make_event("GET", "/orphaned-receipts"), None)
+
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        assert "s3://test-bucket/receipts/2024/orphan.pdf" in body["orphaned_receipts"]
+        assert "s3://test-bucket/receipts/2024/exists.pdf" not in body["orphaned_receipts"]
+        assert len(body["broken_references"]) == 1
+        assert body["broken_references"][0]["Vendor/Provider"] == "Dr. Jones"
+
+    @patch.dict(os.environ, ENV_VARS)
+    @patch("hsa_receipt_archiver.web_handler.list_receipt_keys", return_value=[])
+    @patch("hsa_receipt_archiver.web_handler.fetch_ledger", return_value=None)
+    def test_handles_no_ledger(self, mock_fetch: MagicMock, mock_list: MagicMock) -> None:
+        result = handle(_make_event("GET", "/orphaned-receipts"), None)
+
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        assert body["orphaned_receipts"] == []
+        assert body["broken_references"] == []
+
+    @patch.dict(os.environ, ENV_VARS)
+    @patch("hsa_receipt_archiver.web_handler.list_receipt_keys", side_effect=Exception("S3 error"))
+    def test_returns_500_on_error(self, mock_list: MagicMock) -> None:
+        result = handle(_make_event("GET", "/orphaned-receipts"), None)
+
+        assert result["statusCode"] == 500
 
 
 class TestRouting:

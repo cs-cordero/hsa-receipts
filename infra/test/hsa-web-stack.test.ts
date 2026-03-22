@@ -154,8 +154,8 @@ describe("HsaWebStack", () => {
     });
 
     describe("API Gateway — routes require authorization", () => {
-        test("exactly 3 routes exist", () => {
-            template.resourceCountIs("AWS::ApiGatewayV2::Route", 3);
+        test("exactly 6 routes exist", () => {
+            template.resourceCountIs("AWS::ApiGatewayV2::Route", 6);
         });
 
         test("all routes require JWT authorization", () => {
@@ -182,19 +182,40 @@ describe("HsaWebStack", () => {
             });
         });
 
+        test("GET /receipt route exists", () => {
+            template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+                RouteKey: "GET /receipt",
+                AuthorizationType: "JWT",
+            });
+        });
+
         test("POST /receipt route exists", () => {
             template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
                 RouteKey: "POST /receipt",
                 AuthorizationType: "JWT",
             });
         });
+
+        test("DELETE /receipt route exists", () => {
+            template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+                RouteKey: "DELETE /receipt",
+                AuthorizationType: "JWT",
+            });
+        });
+
+        test("GET /orphaned-receipts route exists", () => {
+            template.hasResourceProperties("AWS::ApiGatewayV2::Route", {
+                RouteKey: "GET /orphaned-receipts",
+                AuthorizationType: "JWT",
+            });
+        });
     });
 
     describe("API Gateway — CORS", () => {
-        test("allows only GET, PUT, POST, OPTIONS methods", () => {
+        test("allows only GET, PUT, POST, DELETE, OPTIONS methods", () => {
             template.hasResourceProperties("AWS::ApiGatewayV2::Api", {
                 CorsConfiguration: {
-                    AllowMethods: ["GET", "PUT", "POST", "OPTIONS"],
+                    AllowMethods: ["GET", "PUT", "POST", "DELETE", "OPTIONS"],
                     AllowHeaders: Match.anyValue(),
                     AllowOrigins: Match.anyValue(),
                     MaxAge: Match.anyValue(),

@@ -19,7 +19,7 @@ def _make_eligibility_result(**overrides: object) -> EligibilityResult:
         "provider": "Dr Smith",
         "service_date": "2025-02-15",
         "payment_date": None,
-        "patient": "John Doe",
+        "patient": "CHRIS",
         "reasoning": "Eligible",
     }
     defaults.update(overrides)
@@ -142,6 +142,44 @@ class TestProcessAttachment:
         with pytest.raises(ValueError, match="15 pages"):
             process_attachment(b"data", "application/pdf", "big.pdf", False, "key", "bucket")
 
+    @patch("hsa_receipt_archiver.archiver.processor.store_ledger")
+    @patch("hsa_receipt_archiver.archiver.processor.fetch_ledger", return_value=None)
+    @patch("hsa_receipt_archiver.archiver.processor.store_receipt", return_value="s3://b/r.pdf")
+    @patch("hsa_receipt_archiver.archiver.processor.convert_to_pdfa", return_value=b"pdf")
+    @patch("hsa_receipt_archiver.archiver.processor.check_hsa_eligibility")
+    def test_invalid_patient_defaults_to_unknown(
+        self,
+        mock_check: MagicMock,
+        mock_convert: MagicMock,
+        mock_store_receipt: MagicMock,
+        mock_fetch_ledger: MagicMock,
+        mock_store_ledger: MagicMock,
+    ) -> None:
+        mock_check.return_value = [_make_eligibility_result(patient="John Doe")]
+
+        result = process_attachment(b"data", "image/jpeg", "receipt.jpg", False, "key", "bucket")
+
+        assert result.entries[0].patient == "UNKNOWN"
+
+    @patch("hsa_receipt_archiver.archiver.processor.store_ledger")
+    @patch("hsa_receipt_archiver.archiver.processor.fetch_ledger", return_value=None)
+    @patch("hsa_receipt_archiver.archiver.processor.store_receipt", return_value="s3://b/r.pdf")
+    @patch("hsa_receipt_archiver.archiver.processor.convert_to_pdfa", return_value=b"pdf")
+    @patch("hsa_receipt_archiver.archiver.processor.check_hsa_eligibility")
+    def test_none_patient_defaults_to_unknown(
+        self,
+        mock_check: MagicMock,
+        mock_convert: MagicMock,
+        mock_store_receipt: MagicMock,
+        mock_fetch_ledger: MagicMock,
+        mock_store_ledger: MagicMock,
+    ) -> None:
+        mock_check.return_value = [_make_eligibility_result(patient=None)]
+
+        result = process_attachment(b"data", "image/jpeg", "receipt.jpg", False, "key", "bucket")
+
+        assert result.entries[0].patient == "UNKNOWN"
+
     @patch("hsa_receipt_archiver.archiver.processor.check_hsa_eligibility")
     def test_receipt_before_earliest_date_rejected(self, mock_check: MagicMock) -> None:
         mock_check.return_value = [_make_eligibility_result(service_date="2025-01-10")]
@@ -162,3 +200,23 @@ class TestProcessAttachment:
         assert len(result.entries) == 0
         assert len(result.rejections) == 1
         assert "predates the HSA account" in result.rejections[0].reasoning
+
+    @patch("hsa_receipt_archiver.archiver.processor.store_receipt", return_value="s3://b/manual.pdf")
+    @patch("hsa_receipt_archiver.archiver.processor.convert_to_pdfa", return_value=b"pdf")
+    @patch("hsa_receipt_archiver.archiver.processor.check_hsa_eligibility")
+    def test_store_only_skips_analysis_and_ledger(
+        self,
+        mock_check: MagicMock,
+        mock_convert: MagicMock,
+        mock_store_receipt: MagicMock,
+    ) -> None:
+        result = process_attachment(
+            b"data", "image/jpeg", "receipt.jpg", False, "key", "bucket", store_only=True
+        )
+
+        assert len(result.entries) == 0
+        assert len(result.rejections) == 0
+        assert result.receipt_s3_uri == "s3://b/manual.pdf"
+        mock_check.assert_not_called()
+        mock_convert.assert_called_once()
+        mock_store_receipt.assert_called_once()

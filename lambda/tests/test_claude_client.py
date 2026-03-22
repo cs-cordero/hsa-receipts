@@ -29,7 +29,7 @@ def _single_eligible_item(**overrides: object) -> dict[str, object]:
         "provider": "Dr Smith",
         "service_date": "2025-01-15",
         "payment_date": "2025-01-16",
-        "patient": "John Doe",
+        "patient": "CHRIS",
         "reasoning": "Standard medical expense",
     }
     base.update(overrides)

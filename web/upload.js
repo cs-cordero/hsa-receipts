@@ -25,7 +25,7 @@ function readFileAsBase64(file) {
     });
 }
 
-async function uploadReceipt(file, forceStore) {
+async function uploadReceipt(file, forceStore, storeOnly) {
     const base64Data = await readFileAsBase64(file);
     const contentType = ALLOWED_TYPES[file.type];
     if (!contentType) {
@@ -44,6 +44,7 @@ async function uploadReceipt(file, forceStore) {
             content_type: contentType,
             data: base64Data,
             force_store: forceStore,
+            store_only: storeOnly,
         }),
     });
 
@@ -53,6 +54,35 @@ async function uploadReceipt(file, forceStore) {
     }
 
     return await response.json();
+}
+
+// ── Receipt Link ────────────────────────────────────────────────────────────────
+
+function createReceiptLink(s3Uri) {
+    var match = s3Uri.match(/^s3:\/\/[^/]+\/(.+)$/);
+    if (!match) return document.createTextNode(s3Uri);
+
+    var link = document.createElement("a");
+    link.textContent = "View Receipt";
+    link.href = "#";
+    link.addEventListener("click", function (e) {
+        e.preventDefault();
+        openReceiptFromUri(match[1]);
+    });
+    return link;
+}
+
+async function openReceiptFromUri(key) {
+    var token = await getAccessToken();
+    var response = await fetch(CONFIG.apiEndpoint + "/receipt?key=" + encodeURIComponent(key), {
+        headers: { "Authorization": "Bearer " + token },
+    });
+    if (!response.ok) {
+        alert("Failed to get receipt URL: " + response.status);
+        return;
+    }
+    var data = await response.json();
+    window.open(data.url, "_blank");
 }
 
 // ── Results Display ─────────────────────────────────────────────────────────────
@@ -90,6 +120,13 @@ function displayResults(data) {
         }
         table.appendChild(tbody);
         section.appendChild(table);
+
+        if (data.receipt_s3_uri) {
+            var linkP = document.createElement("p");
+            linkP.appendChild(createReceiptLink(data.receipt_s3_uri));
+            section.appendChild(linkP);
+        }
+
         resultsDiv.appendChild(section);
     }
 
@@ -137,9 +174,28 @@ function showUploadStatus(message, type) {
 
 // ── Upload Handler ──────────────────────────────────────────────────────────────
 
+function displayStoreOnlyResult(data) {
+    const resultsDiv = document.getElementById("results");
+    resultsDiv.innerHTML = "";
+    resultsDiv.classList.remove("hidden");
+
+    const section = document.createElement("div");
+    section.className = "results-section";
+    section.innerHTML = "<h2>Stored</h2>";
+
+    var p = document.createElement("p");
+    p.textContent = "Receipt archived at: ";
+    var code = document.createElement("code");
+    code.textContent = data.receipt_s3_uri || "unknown";
+    p.appendChild(code);
+    section.appendChild(p);
+    resultsDiv.appendChild(section);
+}
+
 async function handleUpload() {
     const fileInput = document.getElementById("file-input");
     const forceStore = document.getElementById("force-store").checked;
+    const storeOnly = document.getElementById("store-only").checked;
     const file = fileInput.files[0];
 
     if (!file) {
@@ -153,12 +209,17 @@ async function handleUpload() {
     btn.disabled = true;
     spinner.classList.remove("hidden");
     document.getElementById("results").classList.add("hidden");
-    showUploadStatus("Uploading and analyzing receipt...", "info");
+    showUploadStatus(storeOnly ? "Uploading receipt..." : "Uploading and analyzing receipt...", "info");
 
     try {
-        const data = await uploadReceipt(file, forceStore);
-        displayResults(data);
-        showUploadStatus("Analysis complete", "success");
+        const data = await uploadReceipt(file, forceStore, storeOnly);
+        if (storeOnly) {
+            displayStoreOnlyResult(data);
+            showUploadStatus("Receipt stored", "success");
+        } else {
+            displayResults(data);
+            showUploadStatus("Analysis complete", "success");
+        }
     } catch (err) {
         showUploadStatus("Upload failed: " + err.message, "error");
     } finally {
@@ -171,4 +232,13 @@ async function handleUpload() {
 
 function initUpload() {
     document.getElementById("upload-btn").addEventListener("click", handleUpload);
+
+    const forceStore = document.getElementById("force-store");
+    const storeOnly = document.getElementById("store-only");
+    forceStore.addEventListener("change", function () {
+        if (forceStore.checked) storeOnly.checked = false;
+    });
+    storeOnly.addEventListener("change", function () {
+        if (storeOnly.checked) forceStore.checked = false;
+    });
 }

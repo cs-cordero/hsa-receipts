@@ -56,7 +56,7 @@ def _sample_entry() -> LedgerEntry:
         service_date=datetime(2025, 1, 15, tzinfo=UTC).date(),
         payment_date=None,
         provider="Dr Smith",
-        patient="John Doe",
+        patient="CHRIS",
         category="Medical",
         description="Office visit",
         amount=100.0,
@@ -318,6 +318,35 @@ class TestWebUploadPath:
 
         result = process_receipt(_make_web_upload_event(), None)
         assert result["statusCode"] == 500
+
+    @patch.dict(os.environ, ENV_VARS)
+    @patch("hsa_receipt_archiver.receipt_handler.process_attachment")
+    @patch("hsa_receipt_archiver.receipt_handler.fetch_upload", return_value=b"file-data")
+    @patch("hsa_receipt_archiver.receipt_handler.get_ssm_param", return_value="api-key-123")
+    def test_store_only_passes_flag_and_returns_uri(
+        self,
+        mock_ssm: MagicMock,
+        mock_fetch: MagicMock,
+        mock_process: MagicMock,
+    ) -> None:
+        mock_process.return_value = ProcessingResult(
+            entries=[],
+            rejections=[],
+            receipt_s3_uri="s3://test-bucket/receipts/2025/manual.pdf",
+        )
+
+        from hsa_receipt_archiver.receipt_handler import _handle
+
+        result = _handle(_make_web_upload_event(store_only=True))
+
+        assert result["statusCode"] == 200
+        body = json.loads(result["body"])
+        assert body["receipt_s3_uri"] == "s3://test-bucket/receipts/2025/manual.pdf"
+        assert body["entries"] == []
+        assert body["rejections"] == []
+        mock_process.assert_called_once()
+        call_kwargs = mock_process.call_args[1]
+        assert call_kwargs["store_only"] is True
 
 
 class TestUtilities:

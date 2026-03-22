@@ -115,8 +115,9 @@ def _handle_web_upload(event: dict[str, Any]) -> dict[str, Any]:
     content_type = event["content_type"]
     filename = event["filename"]
     force_store = event.get("force_store", False)
+    store_only = event.get("store_only", False)
 
-    LOGGER.info("Processing web upload: %s (content_type=%s)", filename, content_type)
+    LOGGER.info("Processing web upload: %s (content_type=%s, store_only=%s)", filename, content_type, store_only)
 
     data = fetch_upload(bucket, key)
     api_key = get_ssm_param(SSM_API_KEY_PARAM)
@@ -128,6 +129,7 @@ def _handle_web_upload(event: dict[str, Any]) -> dict[str, Any]:
         force_store=force_store,
         api_key=api_key,
         bucket=bucket,
+        store_only=store_only,
     )
 
     response_body = {

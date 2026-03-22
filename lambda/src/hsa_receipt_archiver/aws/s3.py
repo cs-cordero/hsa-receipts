@@ -69,6 +69,34 @@ def fetch_upload(bucket: str, key: str) -> bytes:
     return response["Body"].read()
 
 
+def generate_presigned_receipt_url(bucket: str, key: str) -> str:
+    """Generate a presigned GET URL for a receipt PDF with inline content disposition."""
+    return _S3_CLIENT.generate_presigned_url(
+        "get_object",
+        Params={
+            "Bucket": bucket,
+            "Key": key,
+            "ResponseContentDisposition": "inline",
+        },
+        ExpiresIn=300,
+    )
+
+
+def list_receipt_keys(bucket: str) -> list[str]:
+    """List all S3 keys under the receipts/ prefix."""
+    keys: list[str] = []
+    paginator = _S3_CLIENT.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix="receipts/"):
+        for obj in page.get("Contents", []):
+            keys.append(obj["Key"])
+    return keys
+
+
+def delete_object(bucket: str, key: str) -> None:
+    """Delete a single object from S3."""
+    _S3_CLIENT.delete_object(Bucket=bucket, Key=key)
+
+
 def tag_raw_email(bucket: str, key: str) -> None:
     """Tag a raw email as processed so it expires after 7 days instead of 30."""
     _S3_CLIENT.put_object_tagging(
