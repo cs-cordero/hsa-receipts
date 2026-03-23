@@ -3,7 +3,7 @@
 const LEDGER_HEADERS = [
     "Id", "Service Date", "Payment Date", "Vendor/Provider",
     "Patient/For", "Category", "Description", "Amount",
-    "Receipt S3 URI", "Reimbursed", "Notes", "Prob. of Duplicate",
+    "Receipt S3 URI", "Reimbursed", "Creation Date", "Notes", "Prob. of Duplicate",
 ];
 
 let gridApi = null;
@@ -120,6 +120,17 @@ function getColumnDefs() {
             cellDataType: "text",
         },
         {
+            headerName: "Sort Date",
+            editable: false,
+            width: 120,
+            cellDataType: "text",
+            sortable: true,
+            filter: true,
+            valueGetter: function (params) {
+                return params.data["Service Date"] || params.data["Payment Date"] || "";
+            },
+        },
+        {
             field: "Service Date",
             editable: true,
             width: 130,
@@ -213,6 +224,27 @@ function getColumnDefs() {
             },
         },
         {
+            headerName: "Created",
+            editable: true,
+            width: 120,
+            cellDataType: "text",
+            valueGetter: function (params) {
+                return params.data["Creation Date"];
+            },
+            valueSetter: function (params) {
+                var newValue = params.newValue.trim();
+                if (newValue === "") {
+                    params.data["Creation Date"] = "";
+                    return true;
+                }
+                if (/^\d{4}-\d{2}-\d{2}$/.test(newValue) && !isNaN(Date.parse(newValue))) {
+                    params.data["Creation Date"] = newValue;
+                    return true;
+                }
+                return false;
+            },
+        },
+        {
             field: "Notes",
             editable: true,
             width: 200,
@@ -298,6 +330,7 @@ function addRow() {
     }
     newRow["Id"] = String(maxId + 1);
     newRow["Reimbursed"] = "No";
+    newRow["Creation Date"] = new Date().toISOString().slice(0, 10);
 
     gridApi.applyTransaction({ add: [newRow] });
     markDirty();

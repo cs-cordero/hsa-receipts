@@ -3,6 +3,7 @@
 import csv
 import io
 from datetime import date
+from unittest.mock import patch
 
 from hsa_receipt_archiver.archiver.ledger import (
     _HEADERS,
@@ -99,7 +100,15 @@ def test_add_entry_notes_always_empty(sample_ledger_entry: LedgerEntry) -> None:
     result = add_ledger_entry(None, sample_ledger_entry)
     reader = csv.reader(io.StringIO(result))
     rows = list(reader)
-    assert rows[1][10] == ""
+    assert rows[1][11] == ""
+
+
+@patch("hsa_receipt_archiver.archiver.ledger.today", return_value=date(2025, 7, 4))
+def test_add_entry_sets_creation_date(mock_today: object, sample_ledger_entry: LedgerEntry) -> None:
+    result = add_ledger_entry(None, sample_ledger_entry)
+    reader = csv.reader(io.StringIO(result))
+    rows = list(reader)
+    assert rows[1][10] == "2025-07-04"
 
 
 def test_add_multiple_entries() -> None:
@@ -268,8 +277,8 @@ def test_duplicate_pct_column_written() -> None:
 
     reader = csv.reader(io.StringIO(ledger))
     rows = list(reader)
-    assert rows[1][11] == ""  # first entry, no dupe
-    assert rows[2][11] == "100"  # second entry, exact dupe
+    assert rows[1][12] == ""  # first entry, no dupe
+    assert rows[2][12] == "100"  # second entry, exact dupe
 
 
 def test_duplicate_pct_column_empty_when_zero() -> None:
@@ -287,4 +296,4 @@ def test_duplicate_pct_column_empty_when_zero() -> None:
 
     reader = csv.reader(io.StringIO(ledger))
     rows = list(reader)
-    assert rows[1][11] == ""
+    assert rows[1][12] == ""

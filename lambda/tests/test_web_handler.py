@@ -252,11 +252,11 @@ class TestDeleteReceipt:
 class TestGetOrphanedReceipts:
     LEDGER_WITH_URIS = (
         "Id,Service Date,Payment Date,Vendor/Provider,Patient/For,Category,"
-        "Description,Amount,Receipt S3 URI,Reimbursed,Notes,Prob. of Duplicate\n"
+        "Description,Amount,Receipt S3 URI,Reimbursed,Creation Date,Notes,Prob. of Duplicate\n"
         "1,2024-01-01,2024-01-02,Dr. Smith,CHRIS,Medical,Visit,100.00,"
-        "s3://test-bucket/receipts/2024/exists.pdf,No,,\n"
+        "s3://test-bucket/receipts/2024/exists.pdf,No,2024-01-03,,\n"
         "2,2024-06-01,2024-06-02,Dr. Jones,CHRIS,Dental,Cleaning,200.00,"
-        "s3://test-bucket/receipts/2024/missing.pdf,No,,\n"
+        "s3://test-bucket/receipts/2024/missing.pdf,No,2024-06-03,,\n"
     )
 
     @patch.dict(os.environ, ENV_VARS)

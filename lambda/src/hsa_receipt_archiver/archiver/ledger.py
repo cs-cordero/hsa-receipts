@@ -5,6 +5,8 @@ import io
 from dataclasses import dataclass
 from datetime import date
 
+from hsa_receipt_archiver.util import today
+
 _HEADERS = [
     "Id",
     "Service Date",
@@ -16,6 +18,7 @@ _HEADERS = [
     "Amount",
     "Receipt S3 URI",
     "Reimbursed",
+    "Creation Date",
     "Notes",
     "Prob. of Duplicate",
 ]
@@ -70,6 +73,7 @@ def add_ledger_entry(ledger_csv: str | None, entry: LedgerEntry) -> str:
             f"{entry.amount:.2f}",
             entry.receipt_s3_uri,
             "No",
+            today().isoformat(),
             "",
             f"{dupe_pct}" if dupe_pct > 0 else "",
         ]
