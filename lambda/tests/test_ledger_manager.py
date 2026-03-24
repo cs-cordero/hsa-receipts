@@ -11,6 +11,7 @@ from hsa_receipt_archiver.archiver.ledger import (
     _duplicate_score,
     add_ledger_entry,
     create_empty_ledger,
+    normalize_line_endings,
 )
 
 
@@ -52,6 +53,46 @@ def test_add_entry_handles_missing_trailing_newline(sample_ledger_entry: LedgerE
     reader = csv.reader(io.StringIO(result))
     rows = list(reader)
     assert len(rows) == 2
+
+
+def test_add_entry_to_csv_without_trailing_newline_produces_valid_rows(sample_ledger_entry: LedgerEntry) -> None:
+    """A CSV with no trailing newline should still produce correctly separated rows."""
+    ledger = create_empty_ledger().rstrip("\n")
+    result = add_ledger_entry(ledger, sample_ledger_entry)
+    assert result.endswith("\n")
+    reader = csv.reader(io.StringIO(result))
+    rows = list(reader)
+    assert rows[0] == _HEADERS
+    assert rows[1][3] == "Test Provider"
+
+
+def test_add_entry_normalizes_mixed_line_endings(sample_ledger_entry: LedgerEntry) -> None:
+    """A CSV with mixed \\r\\n, \\n, and \\r line endings should be parsed correctly."""
+    header = ",".join(_HEADERS)
+    row1 = "1,2025-01-01,,Provider A,,Medical,Visit,10.00,s3://b/r.pdf,No,2025-01-01,,0"
+    row2 = "2,2025-02-01,,Provider B,,Dental,Cleaning,20.00,s3://b/r2.pdf,No,2025-02-01,,"
+    # Mix all three line ending styles
+    ledger = header + "\r\n" + row1 + "\r" + row2 + "\n"
+    result = add_ledger_entry(ledger, sample_ledger_entry)
+    reader = csv.reader(io.StringIO(result))
+    rows = list(reader)
+    assert len(rows) == 4
+    assert rows[1][3] == "Provider A"
+    assert rows[2][3] == "Provider B"
+    assert rows[3][3] == "Test Provider"
+
+
+def test_normalize_line_endings() -> None:
+    assert normalize_line_endings("a\r\nb\rc\n") == "a\nb\nc\n"
+    assert normalize_line_endings("no newlines") == "no newlines"
+    assert normalize_line_endings("\r\n\r\n") == "\n\n"
+
+
+def test_output_uses_lf_line_endings(sample_ledger_entry: LedgerEntry) -> None:
+    """All output from add_ledger_entry should use \\n, never \\r."""
+    result = add_ledger_entry(None, sample_ledger_entry)
+    assert "\r" not in result
+    assert result.endswith("\n")
 
 
 def test_add_entry_none_dates_become_empty_strings(ledger_entry_no_dates: LedgerEntry) -> None:

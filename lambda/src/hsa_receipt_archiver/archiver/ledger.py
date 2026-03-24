@@ -36,10 +36,15 @@ class LedgerEntry:
     receipt_s3_uri: str
 
 
+def normalize_line_endings(text: str) -> str:
+    """Normalize all line endings (\\r\\n, \\r) to \\n."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def create_empty_ledger() -> str:
     """Create a new empty CSV ledger with headers."""
     buf = io.StringIO()
-    writer = csv.writer(buf)
+    writer = csv.writer(buf, lineterminator="\n")
     writer.writerow(_HEADERS)
     return buf.getvalue()
 
@@ -52,6 +57,7 @@ def add_ledger_entry(ledger_csv: str | None, entry: LedgerEntry) -> str:
     if ledger_csv is None:
         ledger_csv = create_empty_ledger()
 
+    ledger_csv = normalize_line_endings(ledger_csv)
     dupe_pct = _duplicate_score(ledger_csv, entry)
     next_id = _next_id(ledger_csv)
 
@@ -60,7 +66,7 @@ def add_ledger_entry(ledger_csv: str | None, entry: LedgerEntry) -> str:
     if not ledger_csv.endswith("\n"):
         buf.write("\n")
 
-    writer = csv.writer(buf)
+    writer = csv.writer(buf, lineterminator="\n")
     writer.writerow(
         [
             next_id,

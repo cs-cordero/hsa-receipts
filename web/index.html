@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HSA Receipts</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.jsdelivr.net/npm/papaparse@5.5.3/papaparse.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@35.1.0/dist/ag-grid-community.min.js"></script>
@@ -28,7 +29,9 @@
         <button id="delete-rows-btn" title="Delete selected rows">Delete Selected</button>
         <button id="save-btn" title="Save ledger">Save</button>
         <button id="download-btn" title="Download ledger as CSV">Download Ledger</button>
+        <button id="reload-btn" title="Reload ledger from server">Reload</button>
         <span id="status-message"></span>
+        <span id="ledger-total"></span>
     </div>
     <div id="grid-container">
         <div id="ledger-grid"></div>

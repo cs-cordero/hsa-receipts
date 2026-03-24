@@ -59,10 +59,10 @@ async function uploadReceipt(file, forceStore, storeOnly) {
 // ── Receipt Link ────────────────────────────────────────────────────────────────
 
 function createReceiptLink(s3Uri) {
-    var match = s3Uri.match(/^s3:\/\/[^/]+\/(.+)$/);
+    const match = s3Uri.match(/^s3:\/\/[^/]+\/(.+)$/);
     if (!match) return document.createTextNode(s3Uri);
 
-    var link = document.createElement("a");
+    const link = document.createElement("a");
     link.textContent = "View Receipt";
     link.href = "#";
     link.addEventListener("click", function (e) {
@@ -73,15 +73,15 @@ function createReceiptLink(s3Uri) {
 }
 
 async function openReceiptFromUri(key) {
-    var token = await getAccessToken();
-    var response = await fetch(CONFIG.apiEndpoint + "/receipt?key=" + encodeURIComponent(key), {
+    const token = await getAccessToken();
+    const response = await fetch(CONFIG.apiEndpoint + "/receipt?key=" + encodeURIComponent(key), {
         headers: { "Authorization": "Bearer " + token },
     });
     if (!response.ok) {
         alert("Failed to get receipt URL: " + response.status);
         return;
     }
-    var data = await response.json();
+    const data = await response.json();
     window.open(data.url, "_blank");
 }
 
@@ -122,7 +122,7 @@ function displayResults(data) {
         section.appendChild(table);
 
         if (data.receipt_s3_uri) {
-            var linkP = document.createElement("p");
+            const linkP = document.createElement("p");
             linkP.appendChild(createReceiptLink(data.receipt_s3_uri));
             section.appendChild(linkP);
         }
@@ -183,9 +183,9 @@ function displayStoreOnlyResult(data) {
     section.className = "results-section";
     section.innerHTML = "<h2>Stored</h2>";
 
-    var p = document.createElement("p");
+    const p = document.createElement("p");
     p.textContent = "Receipt archived at: ";
-    var code = document.createElement("code");
+    const code = document.createElement("code");
     code.textContent = data.receipt_s3_uri || "unknown";
     p.appendChild(code);
     section.appendChild(p);

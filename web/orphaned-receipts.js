@@ -3,8 +3,8 @@
 // ── API ─────────────────────────────────────────────────────────────────────────
 
 async function fetchOrphanedReceipts() {
-    var token = await getAccessToken();
-    var response = await fetch(CONFIG.apiEndpoint + "/orphaned-receipts", {
+    const token = await getAccessToken();
+    const response = await fetch(CONFIG.apiEndpoint + "/orphaned-receipts", {
         headers: { "Authorization": "Bearer " + token },
     });
     if (!response.ok) {
@@ -14,8 +14,8 @@ async function fetchOrphanedReceipts() {
 }
 
 async function deleteReceipt(key) {
-    var token = await getAccessToken();
-    var response = await fetch(CONFIG.apiEndpoint + "/receipt?key=" + encodeURIComponent(key), {
+    const token = await getAccessToken();
+    const response = await fetch(CONFIG.apiEndpoint + "/receipt?key=" + encodeURIComponent(key), {
         method: "DELETE",
         headers: { "Authorization": "Bearer " + token },
     });
@@ -26,27 +26,27 @@ async function deleteReceipt(key) {
 }
 
 async function openOrphanedReceipt(key) {
-    var token = await getAccessToken();
-    var response = await fetch(CONFIG.apiEndpoint + "/receipt?key=" + encodeURIComponent(key), {
+    const token = await getAccessToken();
+    const response = await fetch(CONFIG.apiEndpoint + "/receipt?key=" + encodeURIComponent(key), {
         headers: { "Authorization": "Bearer " + token },
     });
     if (!response.ok) {
         alert("Failed to get receipt URL: " + response.status);
         return;
     }
-    var data = await response.json();
+    const data = await response.json();
     window.open(data.url, "_blank");
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────────
 
 function extractKeyFromUri(s3Uri) {
-    var match = s3Uri.match(/^s3:\/\/[^/]+\/(.+)$/);
+    const match = s3Uri.match(/^s3:\/\/[^/]+\/(.+)$/);
     return match ? match[1] : null;
 }
 
 function escapeHtmlOrphaned(str) {
-    var div = document.createElement("div");
+    const div = document.createElement("div");
     div.textContent = str;
     return div.innerHTML;
 }
@@ -54,7 +54,7 @@ function escapeHtmlOrphaned(str) {
 // ── Rendering ────────────────────────────────────────────────────────────────────
 
 function renderOrphanedTable(orphanedReceipts) {
-    var container = document.getElementById("orphaned-table-container");
+    const container = document.getElementById("orphaned-table-container");
     container.innerHTML = "";
 
     if (orphanedReceipts.length === 0) {
@@ -62,7 +62,7 @@ function renderOrphanedTable(orphanedReceipts) {
         return;
     }
 
-    var table = document.createElement("table");
+    const table = document.createElement("table");
     table.className = "results-table";
     table.innerHTML =
         "<thead><tr>" +
@@ -71,24 +71,24 @@ function renderOrphanedTable(orphanedReceipts) {
         "<th>Delete</th>" +
         "</tr></thead>";
 
-    var tbody = document.createElement("tbody");
-    for (var i = 0; i < orphanedReceipts.length; i++) {
-        var uri = orphanedReceipts[i];
-        var key = extractKeyFromUri(uri);
-        var tr = document.createElement("tr");
+    const tbody = document.createElement("tbody");
+    for (let i = 0; i < orphanedReceipts.length; i++) {
+        const uri = orphanedReceipts[i];
+        const key = extractKeyFromUri(uri);
+        const tr = document.createElement("tr");
 
         // Column 1: S3 URI as plain, copyable text
-        var tdUri = document.createElement("td");
+        const tdUri = document.createElement("td");
         tdUri.className = "s3-uri-cell";
-        var code = document.createElement("code");
+        const code = document.createElement("code");
         code.textContent = uri;
         tdUri.appendChild(code);
         tr.appendChild(tdUri);
 
         // Column 2: View link
-        var tdView = document.createElement("td");
+        const tdView = document.createElement("td");
         if (key) {
-            var viewLink = document.createElement("a");
+            const viewLink = document.createElement("a");
             viewLink.textContent = "View";
             viewLink.href = "#";
             viewLink.setAttribute("data-key", key);
@@ -101,9 +101,9 @@ function renderOrphanedTable(orphanedReceipts) {
         tr.appendChild(tdView);
 
         // Column 3: Delete button
-        var tdDelete = document.createElement("td");
+        const tdDelete = document.createElement("td");
         if (key) {
-            var deleteBtn = document.createElement("button");
+            const deleteBtn = document.createElement("button");
             deleteBtn.textContent = "Delete";
             deleteBtn.className = "delete-btn";
             deleteBtn.setAttribute("data-key", key);
@@ -122,7 +122,7 @@ function renderOrphanedTable(orphanedReceipts) {
 }
 
 function renderBrokenTable(brokenReferences) {
-    var container = document.getElementById("broken-table-container");
+    const container = document.getElementById("broken-table-container");
     container.innerHTML = "";
 
     if (brokenReferences.length === 0) {
@@ -130,7 +130,7 @@ function renderBrokenTable(brokenReferences) {
         return;
     }
 
-    var table = document.createElement("table");
+    const table = document.createElement("table");
     table.className = "results-table";
     table.innerHTML =
         "<thead><tr>" +
@@ -142,10 +142,10 @@ function renderBrokenTable(brokenReferences) {
         "<th>Receipt S3 URI</th>" +
         "</tr></thead>";
 
-    var tbody = document.createElement("tbody");
-    for (var i = 0; i < brokenReferences.length; i++) {
-        var row = brokenReferences[i];
-        var tr = document.createElement("tr");
+    const tbody = document.createElement("tbody");
+    for (let i = 0; i < brokenReferences.length; i++) {
+        const row = brokenReferences[i];
+        const tr = document.createElement("tr");
         tr.innerHTML =
             "<td>" + escapeHtmlOrphaned(row["Id"] || "") + "</td>" +
             "<td>" + escapeHtmlOrphaned(row["Service Date"] || "") + "</td>" +
@@ -162,8 +162,8 @@ function renderBrokenTable(brokenReferences) {
 // ── Delete Handler ───────────────────────────────────────────────────────────────
 
 async function handleDelete(btn) {
-    var key = btn.getAttribute("data-key");
-    var uri = btn.getAttribute("data-uri");
+    const key = btn.getAttribute("data-key");
+    const uri = btn.getAttribute("data-uri");
     if (!confirm("Delete " + uri + "?\n\nThis cannot be undone.")) {
         return;
     }
@@ -173,7 +173,7 @@ async function handleDelete(btn) {
 
     try {
         await deleteReceipt(key);
-        var row = btn.closest("tr");
+        const row = btn.closest("tr");
         row.remove();
         showDetectStatus("Deleted " + key, "success");
     } catch (err) {
@@ -186,7 +186,7 @@ async function handleDelete(btn) {
 // ── Status ───────────────────────────────────────────────────────────────────────
 
 function showDetectStatus(message, type) {
-    var el = document.getElementById("detect-status");
+    const el = document.getElementById("detect-status");
     el.textContent = message;
     el.className = "status-" + type;
     if (type === "success") {
@@ -200,10 +200,10 @@ function showDetectStatus(message, type) {
 // ── Main Detect Handler ──────────────────────────────────────────────────────────
 
 async function handleDetect() {
-    var btn = document.getElementById("detect-btn");
-    var spinner = document.getElementById("spinner");
-    var placeholder = document.getElementById("placeholder-message");
-    var results = document.getElementById("results");
+    const btn = document.getElementById("detect-btn");
+    const spinner = document.getElementById("spinner");
+    const placeholder = document.getElementById("placeholder-message");
+    const results = document.getElementById("results");
 
     btn.disabled = true;
     spinner.classList.remove("hidden");
@@ -212,12 +212,12 @@ async function handleDetect() {
     showDetectStatus("Scanning for orphaned receipts...", "info");
 
     try {
-        var data = await fetchOrphanedReceipts();
+        const data = await fetchOrphanedReceipts();
         renderOrphanedTable(data.orphaned_receipts);
         renderBrokenTable(data.broken_references);
         results.classList.remove("hidden");
 
-        var total = data.orphaned_receipts.length + data.broken_references.length;
+        const total = data.orphaned_receipts.length + data.broken_references.length;
         if (total === 0) {
             showDetectStatus("No issues found", "success");
         } else {

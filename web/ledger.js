@@ -1,5 +1,7 @@
 // Ledger editor — fetch, display, edit, and save the HSA receipt CSV ledger.
 
+const CSV_NEWLINE = "\n";
+
 const LEDGER_HEADERS = [
     "Id", "Service Date", "Payment Date", "Vendor/Provider",
     "Patient/For", "Category", "Description", "Amount",
@@ -41,7 +43,7 @@ async function saveLedger(csvString) {
 // ── CSV ─────────────────────────────────────────────────────────────────────────
 
 function parseCsv(csvString) {
-    const result = Papa.parse(csvString.trim(), {
+    const result = Papa.parse(csvString.replace(/\r\n?/g, "\n").trim(), {
         header: true,
         skipEmptyLines: true,
     });
@@ -49,10 +51,16 @@ function parseCsv(csvString) {
 }
 
 function serializeCsv(rowData) {
-    return Papa.unparse({
+    let csv = Papa.unparse({
         fields: LEDGER_HEADERS,
         data: rowData,
+    }, {
+        newline: CSV_NEWLINE,
     });
+    if (!csv.endsWith(CSV_NEWLINE)) {
+        csv += CSV_NEWLINE;
+    }
+    return csv;
 }
 
 // ── Value Setters & Formatters ──────────────────────────────────────────────────
@@ -94,18 +102,18 @@ function amountFormatter(params) {
 
 async function openReceiptLink(s3Uri) {
     // Extract key from "s3://bucket/receipts/..." → "receipts/..."
-    var match = s3Uri.match(/^s3:\/\/[^/]+\/(.+)$/);
+    const match = s3Uri.match(/^s3:\/\/[^/]+\/(.+)$/);
     if (!match) return;
 
-    var token = await getAccessToken();
-    var response = await fetch(CONFIG.apiEndpoint + "/receipt?key=" + encodeURIComponent(match[1]), {
+    const token = await getAccessToken();
+    const response = await fetch(CONFIG.apiEndpoint + "/receipt?key=" + encodeURIComponent(match[1]), {
         headers: { "Authorization": "Bearer " + token },
     });
     if (!response.ok) {
         alert("Failed to get receipt URL: " + response.status);
         return;
     }
-    var data = await response.json();
+    const data = await response.json();
     window.open(data.url, "_blank");
 }
 
@@ -201,9 +209,9 @@ function getColumnDefs() {
             sortable: false,
             filter: false,
             cellRenderer: function (params) {
-                var uri = params.data["Receipt S3 URI"];
+                const uri = params.data["Receipt S3 URI"];
                 if (!uri) return "";
-                var link = document.createElement("a");
+                const link = document.createElement("a");
                 link.textContent = "Download";
                 link.href = "#";
                 link.addEventListener("click", function (e) {
@@ -232,7 +240,7 @@ function getColumnDefs() {
                 return params.data["Creation Date"];
             },
             valueSetter: function (params) {
-                var newValue = params.newValue.trim();
+                const newValue = params.newValue.trim();
                 if (newValue === "") {
                     params.data["Creation Date"] = "";
                     return true;
@@ -285,12 +293,39 @@ function createGrid(rowData) {
         },
         onCellValueChanged: function () {
             markDirty();
+            updateTotal();
         },
         undoRedoCellEditing: true,
         undoRedoCellEditingLimit: 50,
         stopEditingWhenCellsLoseFocus: true,
     };
     gridApi = agGrid.createGrid(gridDiv, gridOptions);
+    updateTotal();
+}
+
+async function refreshGrid() {
+    try {
+        const csv = await fetchLedger();
+        const rowData = parseCsv(csv);
+        gridApi.setGridOption("rowData", rowData);
+        updateTotal();
+    } catch (err) {
+        showStatus("Refresh failed: " + err.message, "error");
+    }
+}
+
+// ── Total ───────────────────────────────────────────────────────────────────
+
+function updateTotal() {
+    const allData = getAllRowData();
+    let total = 0;
+    for (const row of allData) {
+        if (row["Reimbursed"] !== "No") continue;
+        const amount = parseFloat(row["Amount"]);
+        if (!isNaN(amount)) total += amount;
+    }
+    const formatted = total.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    document.getElementById("ledger-total").textContent = "Reimbursable Total: $" + formatted;
 }
 
 // ── Dirty State ─────────────────────────────────────────────────────────────────
@@ -334,6 +369,7 @@ function addRow() {
 
     gridApi.applyTransaction({ add: [newRow] });
     markDirty();
+    updateTotal();
 }
 
 function deleteSelectedRows() {
@@ -348,6 +384,7 @@ function deleteSelectedRows() {
     }
     gridApi.applyTransaction({ remove: selectedRows });
     markDirty();
+    updateTotal();
 }
 
 async function handleSave() {
@@ -366,6 +403,16 @@ async function handleSave() {
     } catch (err) {
         showStatus("Save failed: " + err.message, "error");
     }
+}
+
+async function handleReload() {
+    if (isDirty && !confirm("You have unsaved changes that will be lost. Reload anyway?")) {
+        return;
+    }
+    showStatus("Reloading...", "info");
+    await refreshGrid();
+    markClean();
+    showStatus("Reloaded", "success");
 }
 
 function handleDownload() {
@@ -401,10 +448,17 @@ async function initLedger() {
     document.getElementById("delete-rows-btn").addEventListener("click", deleteSelectedRows);
     document.getElementById("save-btn").addEventListener("click", handleSave);
     document.getElementById("download-btn").addEventListener("click", handleDownload);
+    document.getElementById("reload-btn").addEventListener("click", handleReload);
 
     window.addEventListener("beforeunload", function (e) {
         if (isDirty) {
             e.preventDefault();
+        }
+    });
+
+    window.addEventListener("pageshow", function (e) {
+        if (e.persisted && gridApi && !isDirty) {
+            refreshGrid();
         }
     });
 

@@ -123,6 +123,12 @@ nav a.active {
     font-size: 0.85rem;
 }
 
+#ledger-total {
+    margin-left: auto;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
 .status-info {
     color: #666;
 }
