@@ -13,7 +13,7 @@ os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 os.environ.setdefault("SNS_TOPIC_ARN", "arn:aws:sns:us-east-1:123456789012:test-topic")
 os.environ.setdefault("SNS_DETAILED_FAILURE_TOPIC_ARN", "arn:aws:sns:us-east-1:123456789012:test-detailed-failures")
 
-from hsa_receipt_archiver.archiver.ledger import LedgerEntry
+from corderohq.archiver.ledger import LedgerEntry
 
 
 @pytest.fixture

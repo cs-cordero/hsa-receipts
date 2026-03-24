@@ -9,7 +9,7 @@ from pathlib import Path
 
 import anthropic
 
-from hsa_receipt_archiver.claude_client import IMAGE_CONTENT_TYPES, SYSTEM_PROMPT
+from corderohq.claude_client import IMAGE_CONTENT_TYPES, SYSTEM_PROMPT
 
 SUPPORTED_CONTENT_TYPES = {
     "image/jpeg",

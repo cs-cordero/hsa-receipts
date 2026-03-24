@@ -5,7 +5,7 @@ import io
 from datetime import date
 from unittest.mock import patch
 
-from hsa_receipt_archiver.archiver.ledger import (
+from corderohq.archiver.ledger import (
     _HEADERS,
     LedgerEntry,
     _duplicate_score,
@@ -144,7 +144,7 @@ def test_add_entry_notes_always_empty(sample_ledger_entry: LedgerEntry) -> None:
     assert rows[1][11] == ""
 
 
-@patch("hsa_receipt_archiver.archiver.ledger.today", return_value=date(2025, 7, 4))
+@patch("corderohq.archiver.ledger.today", return_value=date(2025, 7, 4))
 def test_add_entry_sets_creation_date(mock_today: object, sample_ledger_entry: LedgerEntry) -> None:
     result = add_ledger_entry(None, sample_ledger_entry)
     reader = csv.reader(io.StringIO(result))

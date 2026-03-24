@@ -82,7 +82,7 @@ export class HsaReceiptsStack extends cdk.Stack {
         this.handler = new lambda.Function(this, "ReceiptArchiver", {
             functionName: "hsa-receipt-archiver",
             runtime: lambda.Runtime.PYTHON_3_13,
-            handler: "hsa_receipt_archiver.receipt_handler.process_receipt",
+            handler: "corderohq.receipt_handler.process_receipt",
             code: lambda.Code.fromAsset("../lambda", {
                 bundling: {
                     image: lambda.Runtime.PYTHON_3_13.bundlingImage,
@@ -93,7 +93,7 @@ export class HsaReceiptsStack extends cdk.Stack {
                         [
                             "dnf install -y ghostscript",
                             "pip install -r requirements.txt -t /asset-output",
-                            "cp -r src/hsa_receipt_archiver /asset-output/",
+                            "cp -r src/corderohq /asset-output/",
                             "mkdir -p /asset-output/bin /asset-output/lib",
                             "cp /usr/bin/gs /asset-output/bin/gs",
                             "ldd /usr/bin/gs | awk '/=>/ {print $3}' | xargs -I{} cp {} /asset-output/lib/",

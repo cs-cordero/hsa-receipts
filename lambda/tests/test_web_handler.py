@@ -6,7 +6,7 @@ import os
 import typing
 from unittest.mock import MagicMock, patch
 
-from hsa_receipt_archiver.web_handler import handle
+from corderohq.web_handler import handle
 
 ENV_VARS = {"BUCKET_NAME": "test-bucket", "PROCESSOR_FUNCTION_NAME": "hsa-receipt-archiver"}
 
@@ -42,7 +42,7 @@ def _make_event(
 
 class TestGetLedger:
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.web_handler.fetch_ledger", return_value=SAMPLE_CSV)
+    @patch("corderohq.web_handler.fetch_ledger", return_value=SAMPLE_CSV)
     def test_returns_existing_csv(self, mock_fetch: MagicMock) -> None:
         result = handle(_make_event("GET", "/ledger"), None)
 
@@ -52,7 +52,7 @@ class TestGetLedger:
         mock_fetch.assert_called_once_with("test-bucket")
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.web_handler.fetch_ledger", return_value=None)
+    @patch("corderohq.web_handler.fetch_ledger", return_value=None)
     def test_returns_empty_ledger_when_none_exists(self, mock_fetch: MagicMock) -> None:
         result = handle(_make_event("GET", "/ledger"), None)
 
@@ -62,7 +62,7 @@ class TestGetLedger:
         assert "Vendor/Provider" in result["body"]
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.web_handler.fetch_ledger", side_effect=Exception("S3 error"))
+    @patch("corderohq.web_handler.fetch_ledger", side_effect=Exception("S3 error"))
     def test_returns_500_on_s3_error(self, mock_fetch: MagicMock) -> None:
         result = handle(_make_event("GET", "/ledger"), None)
 
@@ -71,7 +71,7 @@ class TestGetLedger:
 
 class TestPutLedger:
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.web_handler.store_ledger")
+    @patch("corderohq.web_handler.store_ledger")
     def test_stores_and_returns_csv(self, mock_store: MagicMock) -> None:
         result = handle(_make_event("PUT", "/ledger", body=SAMPLE_CSV), None)
 
@@ -81,7 +81,7 @@ class TestPutLedger:
         mock_store.assert_called_once_with("test-bucket", SAMPLE_CSV)
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.web_handler.store_ledger")
+    @patch("corderohq.web_handler.store_ledger")
     def test_handles_base64_encoded_body(self, mock_store: MagicMock) -> None:
         result = handle(_make_event("PUT", "/ledger", body=SAMPLE_CSV, base64_encode=True), None)
 
@@ -102,7 +102,7 @@ class TestPutLedger:
         assert result["statusCode"] == 400
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.web_handler.store_ledger", side_effect=Exception("S3 error"))
+    @patch("corderohq.web_handler.store_ledger", side_effect=Exception("S3 error"))
     def test_returns_500_on_s3_error(self, mock_store: MagicMock) -> None:
         result = handle(_make_event("PUT", "/ledger", body=SAMPLE_CSV), None)
 
@@ -121,8 +121,8 @@ class TestPostReceipt:
         return json.dumps(defaults)
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.web_handler._LAMBDA_CLIENT")
-    @patch("hsa_receipt_archiver.web_handler.store_upload")
+    @patch("corderohq.web_handler._LAMBDA_CLIENT")
+    @patch("corderohq.web_handler.store_upload")
     def test_happy_path(self, mock_upload: MagicMock, mock_lambda: MagicMock) -> None:
         mock_payload = MagicMock()
         mock_payload.read.return_value = json.dumps({"statusCode": 200, "body": '{"entries": []}'}).encode()
@@ -162,8 +162,8 @@ class TestPostReceipt:
         assert "Unsupported" in result["body"]
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.web_handler._LAMBDA_CLIENT")
-    @patch("hsa_receipt_archiver.web_handler.store_upload")
+    @patch("corderohq.web_handler._LAMBDA_CLIENT")
+    @patch("corderohq.web_handler.store_upload")
     def test_saves_to_raw_uploads_prefix(self, mock_upload: MagicMock, mock_lambda: MagicMock) -> None:
         mock_payload = MagicMock()
         mock_payload.read.return_value = json.dumps({"statusCode": 200, "body": "{}"}).encode()
@@ -176,8 +176,8 @@ class TestPostReceipt:
         assert upload_key.endswith(".pdf")
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.web_handler._LAMBDA_CLIENT")
-    @patch("hsa_receipt_archiver.web_handler.store_upload")
+    @patch("corderohq.web_handler._LAMBDA_CLIENT")
+    @patch("corderohq.web_handler.store_upload")
     def test_store_only_flag_passed_to_processor(self, mock_upload: MagicMock, mock_lambda: MagicMock) -> None:
         mock_payload = MagicMock()
         mock_payload.read.return_value = json.dumps(
@@ -195,7 +195,7 @@ class TestPostReceipt:
 class TestGetReceipt:
     @patch.dict(os.environ, ENV_VARS)
     @patch(
-        "hsa_receipt_archiver.web_handler.generate_presigned_receipt_url",
+        "corderohq.web_handler.generate_presigned_receipt_url",
         return_value="https://s3.amazonaws.com/presigned",
     )
     def test_returns_presigned_url(self, mock_presign: MagicMock) -> None:
@@ -224,7 +224,7 @@ class TestGetReceipt:
 
 class TestDeleteReceipt:
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.web_handler.delete_object")
+    @patch("corderohq.web_handler.delete_object")
     def test_deletes_receipt(self, mock_delete: MagicMock) -> None:
         event = _make_event("DELETE", "/receipt", query_params={"key": "receipts/2024/file.pdf"})
         result = handle(event, None)
@@ -261,10 +261,10 @@ class TestGetOrphanedReceipts:
 
     @patch.dict(os.environ, ENV_VARS)
     @patch(
-        "hsa_receipt_archiver.web_handler.list_receipt_keys",
+        "corderohq.web_handler.list_receipt_keys",
         return_value=["receipts/2024/exists.pdf", "receipts/2024/orphan.pdf"],
     )
-    @patch("hsa_receipt_archiver.web_handler.fetch_ledger")
+    @patch("corderohq.web_handler.fetch_ledger")
     def test_returns_orphaned_and_broken(self, mock_fetch: MagicMock, mock_list: MagicMock) -> None:
         mock_fetch.return_value = self.LEDGER_WITH_URIS
         result = handle(_make_event("GET", "/orphaned-receipts"), None)
@@ -277,8 +277,8 @@ class TestGetOrphanedReceipts:
         assert body["broken_references"][0]["Vendor/Provider"] == "Dr. Jones"
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.web_handler.list_receipt_keys", return_value=[])
-    @patch("hsa_receipt_archiver.web_handler.fetch_ledger", return_value=None)
+    @patch("corderohq.web_handler.list_receipt_keys", return_value=[])
+    @patch("corderohq.web_handler.fetch_ledger", return_value=None)
     def test_handles_no_ledger(self, mock_fetch: MagicMock, mock_list: MagicMock) -> None:
         result = handle(_make_event("GET", "/orphaned-receipts"), None)
 
@@ -288,7 +288,7 @@ class TestGetOrphanedReceipts:
         assert body["broken_references"] == []
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.web_handler.list_receipt_keys", side_effect=Exception("S3 error"))
+    @patch("corderohq.web_handler.list_receipt_keys", side_effect=Exception("S3 error"))
     def test_returns_500_on_error(self, mock_list: MagicMock) -> None:
         result = handle(_make_event("GET", "/orphaned-receipts"), None)
 
@@ -320,7 +320,7 @@ class TestSecurityHeaders:
     }
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.web_handler.fetch_ledger", return_value=SAMPLE_CSV)
+    @patch("corderohq.web_handler.fetch_ledger", return_value=SAMPLE_CSV)
     def test_get_ledger_has_security_headers(self, mock_fetch: MagicMock) -> None:
         result = handle(_make_event("GET", "/ledger"), None)
 
@@ -328,7 +328,7 @@ class TestSecurityHeaders:
             assert result["headers"][header] == value
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.web_handler.store_ledger")
+    @patch("corderohq.web_handler.store_ledger")
     def test_put_ledger_has_security_headers(self, mock_store: MagicMock) -> None:
         result = handle(_make_event("PUT", "/ledger", body=SAMPLE_CSV), None)
 
@@ -336,8 +336,8 @@ class TestSecurityHeaders:
             assert result["headers"][header] == value
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.web_handler._LAMBDA_CLIENT")
-    @patch("hsa_receipt_archiver.web_handler.store_upload")
+    @patch("corderohq.web_handler._LAMBDA_CLIENT")
+    @patch("corderohq.web_handler.store_upload")
     def test_post_receipt_has_security_headers(self, mock_upload: MagicMock, mock_lambda: MagicMock) -> None:
         mock_payload = MagicMock()
         mock_payload.read.return_value = json.dumps({"statusCode": 200, "body": "{}"}).encode()
@@ -363,7 +363,7 @@ class TestSecurityHeaders:
             assert result["headers"][header] == value
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.web_handler.fetch_ledger", side_effect=Exception("boom"))
+    @patch("corderohq.web_handler.fetch_ledger", side_effect=Exception("boom"))
     def test_500_response_has_security_headers(self, mock_fetch: MagicMock) -> None:
         result = handle(_make_event("GET", "/ledger"), None)
 
@@ -376,20 +376,20 @@ class TestAuditLogging:
     """Requests must be logged with the authenticated user's email."""
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.web_handler.fetch_ledger", return_value=SAMPLE_CSV)
+    @patch("corderohq.web_handler.fetch_ledger", return_value=SAMPLE_CSV)
     def test_logs_user_email_on_request(self, mock_fetch: MagicMock) -> None:
-        with patch("hsa_receipt_archiver.web_handler.LOGGER") as mock_logger:
+        with patch("corderohq.web_handler.LOGGER") as mock_logger:
             handle(_make_event("GET", "/ledger", email="alice@example.com"), None)
 
             mock_logger.info.assert_any_call("Request from %s: %s %s", "alice@example.com", "GET", "/ledger")
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.web_handler.fetch_ledger", return_value=SAMPLE_CSV)
+    @patch("corderohq.web_handler.fetch_ledger", return_value=SAMPLE_CSV)
     def test_logs_unknown_when_no_claims(self, mock_fetch: MagicMock) -> None:
         event = _make_event("GET", "/ledger")
         del event["requestContext"]["authorizer"]
 
-        with patch("hsa_receipt_archiver.web_handler.LOGGER") as mock_logger:
+        with patch("corderohq.web_handler.LOGGER") as mock_logger:
             handle(event, None)
 
             mock_logger.info.assert_any_call("Request from %s: %s %s", "unknown", "GET", "/ledger")

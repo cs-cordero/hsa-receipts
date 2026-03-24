@@ -4,11 +4,11 @@ import logging
 from dataclasses import dataclass
 from datetime import date
 
-from hsa_receipt_archiver.archiver.ledger import LedgerEntry, add_ledger_entry
-from hsa_receipt_archiver.archiver.pdf import convert_to_pdfa, get_page_count
-from hsa_receipt_archiver.aws.s3 import fetch_ledger, store_ledger, store_receipt
-from hsa_receipt_archiver.claude_client import EligibilityResult, check_hsa_eligibility
-from hsa_receipt_archiver.util import parse_date, today
+from corderohq.archiver.ledger import LedgerEntry, add_ledger_entry
+from corderohq.archiver.pdf import convert_to_pdfa, get_page_count
+from corderohq.aws.s3 import fetch_ledger, store_ledger, store_receipt
+from corderohq.claude_client import EligibilityResult, check_hsa_eligibility
+from corderohq.util import parse_date, today
 
 LOGGER = logging.getLogger(__name__)
 

@@ -88,7 +88,7 @@ The web UI uses Cognito's hosted login page with PKCE for authentication. After 
 
 ## Source Code Structure
 
-### `lambda/src/hsa_receipt_archiver/`
+### `lambda/src/corderohq/`
 
 ```
 receipt_handler.py      Receipt processing entrypoint (email + web uploads)

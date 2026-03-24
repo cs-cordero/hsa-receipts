@@ -5,9 +5,9 @@ import os
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
-from hsa_receipt_archiver.archiver.ledger import LedgerEntry
-from hsa_receipt_archiver.archiver.processor import ProcessingResult, RejectionDetail
-from hsa_receipt_archiver.aws.ses import Attachment, ParsedEmail
+from corderohq.archiver.ledger import LedgerEntry
+from corderohq.archiver.processor import ProcessingResult, RejectionDetail
+from corderohq.aws.ses import Attachment, ParsedEmail
 
 ENV_VARS = {
     "BUCKET_NAME": "test-bucket",
@@ -77,12 +77,12 @@ def _make_parsed_email(
 
 class TestSesPath:
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.receipt_handler.tag_raw_email")
-    @patch("hsa_receipt_archiver.receipt_handler.notify_success")
-    @patch("hsa_receipt_archiver.receipt_handler.process_attachment")
-    @patch("hsa_receipt_archiver.receipt_handler.parse_ses_email")
-    @patch("hsa_receipt_archiver.receipt_handler.fetch_raw_email", return_value=b"raw-email")
-    @patch("hsa_receipt_archiver.receipt_handler.get_ssm_param")
+    @patch("corderohq.receipt_handler.tag_raw_email")
+    @patch("corderohq.receipt_handler.notify_success")
+    @patch("corderohq.receipt_handler.process_attachment")
+    @patch("corderohq.receipt_handler.parse_ses_email")
+    @patch("corderohq.receipt_handler.fetch_raw_email", return_value=b"raw-email")
+    @patch("corderohq.receipt_handler.get_ssm_param")
     def test_happy_path(
         self,
         mock_ssm: MagicMock,
@@ -100,7 +100,7 @@ class TestSesPath:
             receipt_s3_uri="s3://test-bucket/receipts/2025/receipt.pdf",
         )
 
-        from hsa_receipt_archiver.receipt_handler import _handle
+        from corderohq.receipt_handler import _handle
 
         result = _handle(_make_ses_event())
 
@@ -112,7 +112,7 @@ class TestSesPath:
 
     @patch.dict(os.environ, ENV_VARS)
     def test_spf_fail_returns_403(self) -> None:
-        from hsa_receipt_archiver.receipt_handler import _handle
+        from corderohq.receipt_handler import _handle
 
         result = _handle(_make_ses_event(spf="FAIL"))
         assert result["statusCode"] == 403
@@ -120,7 +120,7 @@ class TestSesPath:
 
     @patch.dict(os.environ, ENV_VARS)
     def test_dkim_fail_returns_403(self) -> None:
-        from hsa_receipt_archiver.receipt_handler import _handle
+        from corderohq.receipt_handler import _handle
 
         result = _handle(_make_ses_event(dkim="FAIL"))
         assert result["statusCode"] == 403
@@ -128,17 +128,17 @@ class TestSesPath:
 
     @patch.dict(os.environ, ENV_VARS)
     def test_spf_gray_returns_403(self) -> None:
-        from hsa_receipt_archiver.receipt_handler import _handle
+        from corderohq.receipt_handler import _handle
 
         result = _handle(_make_ses_event(spf="GRAY"))
         assert result["statusCode"] == 403
         assert result["body"] == "Email authentication failed"
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.receipt_handler.notify_detailed_failure")
-    @patch("hsa_receipt_archiver.receipt_handler._handle", side_effect=RuntimeError("boom"))
+    @patch("corderohq.receipt_handler.notify_detailed_failure")
+    @patch("corderohq.receipt_handler._handle", side_effect=RuntimeError("boom"))
     def test_process_receipt_catches_exceptions(self, mock_handle: MagicMock, mock_notify_detailed: MagicMock) -> None:
-        from hsa_receipt_archiver.receipt_handler import process_receipt
+        from corderohq.receipt_handler import process_receipt
 
         result = process_receipt(_make_ses_event(), None)
         assert result["statusCode"] == 500
@@ -146,10 +146,10 @@ class TestSesPath:
         assert isinstance(mock_notify_detailed.call_args[0][1], RuntimeError)
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.receipt_handler.tag_raw_email")
-    @patch("hsa_receipt_archiver.receipt_handler.parse_ses_email")
-    @patch("hsa_receipt_archiver.receipt_handler.fetch_raw_email", return_value=b"raw")
-    @patch("hsa_receipt_archiver.receipt_handler.get_ssm_param")
+    @patch("corderohq.receipt_handler.tag_raw_email")
+    @patch("corderohq.receipt_handler.parse_ses_email")
+    @patch("corderohq.receipt_handler.fetch_raw_email", return_value=b"raw")
+    @patch("corderohq.receipt_handler.get_ssm_param")
     def test_unauthorized_sender_returns_403(
         self,
         mock_ssm: MagicMock,
@@ -160,17 +160,17 @@ class TestSesPath:
         mock_ssm.side_effect = lambda name: {"/test/api-key": "key", "/test/senders": "allowed@example.com"}[name]
         mock_parse.return_value = _make_parsed_email(sender="intruder@evil.com")
 
-        from hsa_receipt_archiver.receipt_handler import _handle
+        from corderohq.receipt_handler import _handle
 
         result = _handle(_make_ses_event())
         assert result["statusCode"] == 403
         mock_tag.assert_not_called()
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.receipt_handler.tag_raw_email")
-    @patch("hsa_receipt_archiver.receipt_handler.parse_ses_email")
-    @patch("hsa_receipt_archiver.receipt_handler.fetch_raw_email", return_value=b"raw")
-    @patch("hsa_receipt_archiver.receipt_handler.get_ssm_param")
+    @patch("corderohq.receipt_handler.tag_raw_email")
+    @patch("corderohq.receipt_handler.parse_ses_email")
+    @patch("corderohq.receipt_handler.fetch_raw_email", return_value=b"raw")
+    @patch("corderohq.receipt_handler.get_ssm_param")
     def test_no_attachments_returns_400(
         self,
         mock_ssm: MagicMock,
@@ -181,18 +181,18 @@ class TestSesPath:
         mock_ssm.side_effect = lambda name: {"/test/api-key": "key", "/test/senders": "allowed@example.com"}[name]
         mock_parse.return_value = _make_parsed_email(attachments=[])
 
-        from hsa_receipt_archiver.receipt_handler import _handle
+        from corderohq.receipt_handler import _handle
 
         result = _handle(_make_ses_event())
         assert result["statusCode"] == 400
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.receipt_handler.tag_raw_email")
-    @patch("hsa_receipt_archiver.receipt_handler.notify_rejection")
-    @patch("hsa_receipt_archiver.receipt_handler.process_attachment")
-    @patch("hsa_receipt_archiver.receipt_handler.parse_ses_email")
-    @patch("hsa_receipt_archiver.receipt_handler.fetch_raw_email", return_value=b"raw")
-    @patch("hsa_receipt_archiver.receipt_handler.get_ssm_param")
+    @patch("corderohq.receipt_handler.tag_raw_email")
+    @patch("corderohq.receipt_handler.notify_rejection")
+    @patch("corderohq.receipt_handler.process_attachment")
+    @patch("corderohq.receipt_handler.parse_ses_email")
+    @patch("corderohq.receipt_handler.fetch_raw_email", return_value=b"raw")
+    @patch("corderohq.receipt_handler.get_ssm_param")
     def test_rejection_sends_notification(
         self,
         mock_ssm: MagicMock,
@@ -210,20 +210,20 @@ class TestSesPath:
             receipt_s3_uri=None,
         )
 
-        from hsa_receipt_archiver.receipt_handler import _handle
+        from corderohq.receipt_handler import _handle
 
         result = _handle(_make_ses_event())
         assert result["statusCode"] == 200
         mock_reject.assert_called_once_with("receipt.jpg", "Not eligible", "Not HSA")
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.receipt_handler.tag_raw_email")
-    @patch("hsa_receipt_archiver.receipt_handler.notify_detailed_failure")
-    @patch("hsa_receipt_archiver.receipt_handler.notify_failure")
-    @patch("hsa_receipt_archiver.receipt_handler.process_attachment", side_effect=RuntimeError("API failed"))
-    @patch("hsa_receipt_archiver.receipt_handler.parse_ses_email")
-    @patch("hsa_receipt_archiver.receipt_handler.fetch_raw_email", return_value=b"raw")
-    @patch("hsa_receipt_archiver.receipt_handler.get_ssm_param")
+    @patch("corderohq.receipt_handler.tag_raw_email")
+    @patch("corderohq.receipt_handler.notify_detailed_failure")
+    @patch("corderohq.receipt_handler.notify_failure")
+    @patch("corderohq.receipt_handler.process_attachment", side_effect=RuntimeError("API failed"))
+    @patch("corderohq.receipt_handler.parse_ses_email")
+    @patch("corderohq.receipt_handler.fetch_raw_email", return_value=b"raw")
+    @patch("corderohq.receipt_handler.get_ssm_param")
     def test_attachment_error_sends_failure_notification(
         self,
         mock_ssm: MagicMock,
@@ -237,7 +237,7 @@ class TestSesPath:
         mock_ssm.side_effect = lambda name: {"/test/api-key": "key", "/test/senders": "allowed@example.com"}[name]
         mock_parse.return_value = _make_parsed_email()
 
-        from hsa_receipt_archiver.receipt_handler import _handle
+        from corderohq.receipt_handler import _handle
 
         result = _handle(_make_ses_event())
         assert result["statusCode"] == 500
@@ -250,9 +250,9 @@ class TestSesPath:
 
 class TestWebUploadPath:
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.receipt_handler.process_attachment")
-    @patch("hsa_receipt_archiver.receipt_handler.fetch_upload", return_value=b"file-data")
-    @patch("hsa_receipt_archiver.receipt_handler.get_ssm_param", return_value="api-key-123")
+    @patch("corderohq.receipt_handler.process_attachment")
+    @patch("corderohq.receipt_handler.fetch_upload", return_value=b"file-data")
+    @patch("corderohq.receipt_handler.get_ssm_param", return_value="api-key-123")
     def test_happy_path(
         self,
         mock_ssm: MagicMock,
@@ -265,7 +265,7 @@ class TestWebUploadPath:
             receipt_s3_uri="s3://test-bucket/receipts/2025/receipt.pdf",
         )
 
-        from hsa_receipt_archiver.receipt_handler import _handle
+        from corderohq.receipt_handler import _handle
 
         result = _handle(_make_web_upload_event())
 
@@ -278,9 +278,9 @@ class TestWebUploadPath:
         mock_process.assert_called_once()
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.receipt_handler.process_attachment")
-    @patch("hsa_receipt_archiver.receipt_handler.fetch_upload", return_value=b"file-data")
-    @patch("hsa_receipt_archiver.receipt_handler.get_ssm_param", return_value="api-key-123")
+    @patch("corderohq.receipt_handler.process_attachment")
+    @patch("corderohq.receipt_handler.fetch_upload", return_value=b"file-data")
+    @patch("corderohq.receipt_handler.get_ssm_param", return_value="api-key-123")
     def test_returns_rejections(
         self,
         mock_ssm: MagicMock,
@@ -293,7 +293,7 @@ class TestWebUploadPath:
             receipt_s3_uri=None,
         )
 
-        from hsa_receipt_archiver.receipt_handler import _handle
+        from corderohq.receipt_handler import _handle
 
         result = _handle(_make_web_upload_event())
 
@@ -303,10 +303,10 @@ class TestWebUploadPath:
         assert body["rejections"][0]["reasoning"] == "Not HSA related"
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.receipt_handler.process_attachment", side_effect=RuntimeError("boom"))
-    @patch("hsa_receipt_archiver.receipt_handler.fetch_upload", return_value=b"file-data")
-    @patch("hsa_receipt_archiver.receipt_handler.get_ssm_param", return_value="api-key-123")
-    @patch("hsa_receipt_archiver.receipt_handler.notify_detailed_failure")
+    @patch("corderohq.receipt_handler.process_attachment", side_effect=RuntimeError("boom"))
+    @patch("corderohq.receipt_handler.fetch_upload", return_value=b"file-data")
+    @patch("corderohq.receipt_handler.get_ssm_param", return_value="api-key-123")
+    @patch("corderohq.receipt_handler.notify_detailed_failure")
     def test_error_returns_500(
         self,
         mock_notify: MagicMock,
@@ -314,15 +314,15 @@ class TestWebUploadPath:
         mock_fetch: MagicMock,
         mock_process: MagicMock,
     ) -> None:
-        from hsa_receipt_archiver.receipt_handler import process_receipt
+        from corderohq.receipt_handler import process_receipt
 
         result = process_receipt(_make_web_upload_event(), None)
         assert result["statusCode"] == 500
 
     @patch.dict(os.environ, ENV_VARS)
-    @patch("hsa_receipt_archiver.receipt_handler.process_attachment")
-    @patch("hsa_receipt_archiver.receipt_handler.fetch_upload", return_value=b"file-data")
-    @patch("hsa_receipt_archiver.receipt_handler.get_ssm_param", return_value="api-key-123")
+    @patch("corderohq.receipt_handler.process_attachment")
+    @patch("corderohq.receipt_handler.fetch_upload", return_value=b"file-data")
+    @patch("corderohq.receipt_handler.get_ssm_param", return_value="api-key-123")
     def test_store_only_passes_flag_and_returns_uri(
         self,
         mock_ssm: MagicMock,
@@ -335,7 +335,7 @@ class TestWebUploadPath:
             receipt_s3_uri="s3://test-bucket/receipts/2025/manual.pdf",
         )
 
-        from hsa_receipt_archiver.receipt_handler import _handle
+        from corderohq.receipt_handler import _handle
 
         result = _handle(_make_web_upload_event(store_only=True))
 
@@ -353,18 +353,18 @@ class TestUtilities:
     def test_parse_date_valid_string(self) -> None:
         from datetime import date
 
-        from hsa_receipt_archiver.util import parse_date
+        from corderohq.util import parse_date
 
         result = parse_date("2025-03-15")
         assert result == date(2025, 3, 15)
 
     def test_parse_date_none_returns_none(self) -> None:
-        from hsa_receipt_archiver.util import parse_date
+        from corderohq.util import parse_date
 
         assert parse_date(None) is None
 
     def test_today_returns_utc_date(self) -> None:
-        from hsa_receipt_archiver.util import today
+        from corderohq.util import today
 
         result = today()
         assert result == datetime.now(tz=UTC).date()

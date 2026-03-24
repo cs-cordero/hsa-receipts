@@ -89,7 +89,7 @@ export class HsaWebStack extends cdk.Stack {
         const webHandler = new lambda.Function(this, "WebHandler", {
             functionName: "hsa-web-handler",
             runtime: lambda.Runtime.PYTHON_3_13,
-            handler: "hsa_receipt_archiver.web_handler.handle",
+            handler: "corderohq.web_handler.handle",
             code: lambda.Code.fromAsset("../lambda", {
                 bundling: {
                     image: lambda.Runtime.PYTHON_3_13.bundlingImage,
@@ -99,7 +99,7 @@ export class HsaWebStack extends cdk.Stack {
                         "-c",
                         [
                             "pip install -r requirements-web.txt -t /asset-output",
-                            "cp -r src/hsa_receipt_archiver /asset-output/",
+                            "cp -r src/corderohq /asset-output/",
                         ].join(" && "),
                     ],
                 },

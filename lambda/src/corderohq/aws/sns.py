@@ -4,8 +4,8 @@ import traceback
 
 import boto3
 
-from hsa_receipt_archiver.archiver.ledger import LedgerEntry
-from hsa_receipt_archiver.util import get_env_var
+from corderohq.archiver.ledger import LedgerEntry
+from corderohq.util import get_env_var
 
 _SNS_CLIENT = boto3.client("sns")
 

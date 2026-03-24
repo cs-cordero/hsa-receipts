@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from hsa_receipt_archiver.aws.ses import parse_ses_email
+from corderohq.aws.ses import parse_ses_email
 
 
 def test_parse_simple_text_email(make_mime_email: Callable[..., bytes]) -> None:

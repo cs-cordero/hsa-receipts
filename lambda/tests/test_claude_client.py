@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from anthropic.types import TextBlock
 
-from hsa_receipt_archiver.claude_client import check_hsa_eligibility
+from corderohq.claude_client import check_hsa_eligibility
 
 
 def _make_response(items: list[dict[str, object]] | None = None, text: str | None = None) -> MagicMock:
@@ -36,7 +36,7 @@ def _single_eligible_item(**overrides: object) -> dict[str, object]:
     return base
 
 
-@patch("hsa_receipt_archiver.claude_client.anthropic.Anthropic")
+@patch("corderohq.claude_client.anthropic.Anthropic")
 def test_single_eligible_result(mock_anthropic_cls: MagicMock) -> None:
     mock_client = MagicMock()
     mock_anthropic_cls.return_value = mock_client
@@ -49,7 +49,7 @@ def test_single_eligible_result(mock_anthropic_cls: MagicMock) -> None:
     assert results[0].amount == 100.0
 
 
-@patch("hsa_receipt_archiver.claude_client.anthropic.Anthropic")
+@patch("corderohq.claude_client.anthropic.Anthropic")
 def test_multiple_results(mock_anthropic_cls: MagicMock) -> None:
     mock_client = MagicMock()
     mock_anthropic_cls.return_value = mock_client
@@ -65,7 +65,7 @@ def test_multiple_results(mock_anthropic_cls: MagicMock) -> None:
     assert results[1].description == "Visit 2"
 
 
-@patch("hsa_receipt_archiver.claude_client.anthropic.Anthropic")
+@patch("corderohq.claude_client.anthropic.Anthropic")
 def test_missing_amount_forces_ineligible(mock_anthropic_cls: MagicMock) -> None:
     mock_client = MagicMock()
     mock_anthropic_cls.return_value = mock_client
@@ -76,7 +76,7 @@ def test_missing_amount_forces_ineligible(mock_anthropic_cls: MagicMock) -> None
     assert "required fields" in results[0].reasoning.lower()
 
 
-@patch("hsa_receipt_archiver.claude_client.anthropic.Anthropic")
+@patch("corderohq.claude_client.anthropic.Anthropic")
 def test_missing_provider_forces_ineligible(mock_anthropic_cls: MagicMock) -> None:
     mock_client = MagicMock()
     mock_anthropic_cls.return_value = mock_client
@@ -86,7 +86,7 @@ def test_missing_provider_forces_ineligible(mock_anthropic_cls: MagicMock) -> No
     assert results[0].is_eligible is False
 
 
-@patch("hsa_receipt_archiver.claude_client.anthropic.Anthropic")
+@patch("corderohq.claude_client.anthropic.Anthropic")
 def test_both_dates_none_forces_ineligible(mock_anthropic_cls: MagicMock) -> None:
     mock_client = MagicMock()
     mock_anthropic_cls.return_value = mock_client
@@ -98,7 +98,7 @@ def test_both_dates_none_forces_ineligible(mock_anthropic_cls: MagicMock) -> Non
     assert results[0].is_eligible is False
 
 
-@patch("hsa_receipt_archiver.claude_client.anthropic.Anthropic")
+@patch("corderohq.claude_client.anthropic.Anthropic")
 def test_one_date_present_stays_eligible(mock_anthropic_cls: MagicMock) -> None:
     mock_client = MagicMock()
     mock_anthropic_cls.return_value = mock_client
@@ -110,7 +110,7 @@ def test_one_date_present_stays_eligible(mock_anthropic_cls: MagicMock) -> None:
     assert results[0].is_eligible is True
 
 
-@patch("hsa_receipt_archiver.claude_client.anthropic.Anthropic")
+@patch("corderohq.claude_client.anthropic.Anthropic")
 def test_image_content_type_uses_image_block(mock_anthropic_cls: MagicMock) -> None:
     mock_client = MagicMock()
     mock_anthropic_cls.return_value = mock_client
@@ -122,7 +122,7 @@ def test_image_content_type_uses_image_block(mock_anthropic_cls: MagicMock) -> N
     assert content[0]["type"] == "image"
 
 
-@patch("hsa_receipt_archiver.claude_client.anthropic.Anthropic")
+@patch("corderohq.claude_client.anthropic.Anthropic")
 def test_pdf_content_type_uses_document_block(mock_anthropic_cls: MagicMock) -> None:
     mock_client = MagicMock()
     mock_anthropic_cls.return_value = mock_client
@@ -134,7 +134,7 @@ def test_pdf_content_type_uses_document_block(mock_anthropic_cls: MagicMock) -> 
     assert content[0]["type"] == "document"
 
 
-@patch("hsa_receipt_archiver.claude_client.anthropic.Anthropic")
+@patch("corderohq.claude_client.anthropic.Anthropic")
 def test_uses_correct_model(mock_anthropic_cls: MagicMock) -> None:
     mock_client = MagicMock()
     mock_anthropic_cls.return_value = mock_client
@@ -145,7 +145,7 @@ def test_uses_correct_model(mock_anthropic_cls: MagicMock) -> None:
     assert call_kwargs["model"] == "claude-haiku-4-5-20251001"
 
 
-@patch("hsa_receipt_archiver.claude_client.anthropic.Anthropic")
+@patch("corderohq.claude_client.anthropic.Anthropic")
 def test_passes_api_key(mock_anthropic_cls: MagicMock) -> None:
     mock_client = MagicMock()
     mock_anthropic_cls.return_value = mock_client
@@ -155,7 +155,7 @@ def test_passes_api_key(mock_anthropic_cls: MagicMock) -> None:
     mock_anthropic_cls.assert_called_once_with(api_key="my-secret-key")
 
 
-@patch("hsa_receipt_archiver.claude_client.anthropic.Anthropic")
+@patch("corderohq.claude_client.anthropic.Anthropic")
 def test_empty_response_raises_value_error(mock_anthropic_cls: MagicMock) -> None:
     mock_client = MagicMock()
     mock_anthropic_cls.return_value = mock_client
@@ -165,7 +165,7 @@ def test_empty_response_raises_value_error(mock_anthropic_cls: MagicMock) -> Non
         check_hsa_eligibility("api-key", b"data", "image/jpeg")
 
 
-@patch("hsa_receipt_archiver.claude_client.anthropic.Anthropic")
+@patch("corderohq.claude_client.anthropic.Anthropic")
 def test_markdown_fenced_json_is_parsed(mock_anthropic_cls: MagicMock) -> None:
     mock_client = MagicMock()
     mock_anthropic_cls.return_value = mock_client

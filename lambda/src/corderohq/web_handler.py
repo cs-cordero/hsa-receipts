@@ -10,8 +10,8 @@ from typing import Any
 
 import boto3
 
-from hsa_receipt_archiver.archiver.ledger import create_empty_ledger
-from hsa_receipt_archiver.aws.s3 import (
+from corderohq.archiver.ledger import create_empty_ledger
+from corderohq.aws.s3 import (
     delete_object,
     fetch_ledger,
     generate_presigned_receipt_url,
@@ -19,7 +19,7 @@ from hsa_receipt_archiver.aws.s3 import (
     store_ledger,
     store_upload,
 )
-from hsa_receipt_archiver.util import get_env_var
+from corderohq.util import get_env_var
 
 LOGGER = logging.getLogger(__name__)
 

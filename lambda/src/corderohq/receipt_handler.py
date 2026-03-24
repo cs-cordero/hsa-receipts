@@ -5,12 +5,12 @@ import logging
 from email.utils import parseaddr
 from typing import Any
 
-from hsa_receipt_archiver.archiver.processor import ProcessingResult, process_attachment
-from hsa_receipt_archiver.aws.s3 import fetch_raw_email, fetch_upload, tag_raw_email
-from hsa_receipt_archiver.aws.ses import parse_ses_email
-from hsa_receipt_archiver.aws.sns import notify_detailed_failure, notify_failure, notify_rejection, notify_success
-from hsa_receipt_archiver.aws.ssm import get_ssm_param
-from hsa_receipt_archiver.util import get_env_var
+from corderohq.archiver.processor import ProcessingResult, process_attachment
+from corderohq.aws.s3 import fetch_raw_email, fetch_upload, tag_raw_email
+from corderohq.aws.ses import parse_ses_email
+from corderohq.aws.sns import notify_detailed_failure, notify_failure, notify_rejection, notify_success
+from corderohq.aws.ssm import get_ssm_param
+from corderohq.util import get_env_var
 
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
