@@ -1,0 +1,360 @@
+/**
+ * Per-response runtime parsers. Each parser takes `unknown` and returns a typed
+ * value, throwing if the input doesn't match the expected shape. Composed from
+ * `validate.ts` primitives.
+ */
+
+import type {
+    AuditEntry,
+    AuditUser,
+    BudgetTarget,
+    Category,
+    CategoryGroup,
+    CategoryNameHistoryEntry,
+    ColumnMapping,
+    CommitResult,
+    DeactivateResult,
+    DeletionPreview,
+    HardDeleteResult,
+    ParsedTransaction,
+    PinResult,
+    RowValidation,
+    RowValidationIssue,
+    Summary,
+    SummaryCategory,
+    Transaction,
+    UploadResult,
+} from "./types";
+import {
+    arrayOf,
+    isObject,
+    optionalBoolean,
+    requireBoolean,
+    requireNumber,
+    requireObject,
+    requireString,
+    stringArray,
+} from "./validate";
+
+function parseCategoryNameHistoryEntry(raw: unknown): CategoryNameHistoryEntry {
+    const obj = requireObject(raw, "CategoryNameHistoryEntry");
+    return {
+        previousName: requireString(obj, "previousName", "CategoryNameHistoryEntry"),
+        replacedAt: requireString(obj, "replacedAt", "CategoryNameHistoryEntry"),
+    };
+}
+
+export function parseCategoryGroup(raw: unknown): CategoryGroup {
+    const obj = requireObject(raw, "CategoryGroup");
+    // Pre-existing rows may still carry an `active` boolean from the old soft-delete
+    // model. We ignore it — groups now have a single lifecycle state (exists or not).
+    return {
+        groupId: requireString(obj, "groupId", "CategoryGroup"),
+        name: requireString(obj, "name", "CategoryGroup"),
+        order: requireNumber(obj, "order", "CategoryGroup"),
+        createdAt: requireString(obj, "createdAt", "CategoryGroup"),
+        updatedAt: requireString(obj, "updatedAt", "CategoryGroup"),
+        // `system` defaults to false for pre-CP12.5 rows lacking the field.
+        system: obj.system === undefined ? false : requireBoolean(obj, "system", "CategoryGroup"),
+    };
+}
+
+export function parseCategoryGroupArray(raw: unknown): CategoryGroup[] {
+    return arrayOf(raw, parseCategoryGroup, "CategoryGroup[]");
+}
+
+export function parseCategory(raw: unknown): Category {
+    const obj = requireObject(raw, "Category");
+    return {
+        categoryId: requireString(obj, "categoryId", "Category"),
+        name: requireString(obj, "name", "Category"),
+        active: requireBoolean(obj, "active", "Category"),
+        createdAt: requireString(obj, "createdAt", "Category"),
+        updatedAt: requireString(obj, "updatedAt", "Category"),
+        // Pre-CP8 rows lack nameHistory; pre-CP12 rows lack groupId + orderInGroup.
+        // Both backfill scripts populate these on existing rows; tolerate missing
+        // values here so a partially-migrated table doesn't break the UI.
+        nameHistory:
+            obj.nameHistory === undefined
+                ? []
+                : arrayOf(obj.nameHistory, parseCategoryNameHistoryEntry, "Category.nameHistory"),
+        groupId: typeof obj.groupId === "string" ? obj.groupId : "",
+        orderInGroup: typeof obj.orderInGroup === "number" ? obj.orderInGroup : 0,
+    };
+}
+
+export function parseCategoryArray(raw: unknown): Category[] {
+    return arrayOf(raw, parseCategory, "Category[]");
+}
+
+export function parseDeactivateResult(raw: unknown): DeactivateResult {
+    const obj = requireObject(raw, "DeactivateResult");
+    return {
+        category: parseCategory(obj.category),
+        affectedMonths: stringArray(obj.affectedMonths, "DeactivateResult.affectedMonths"),
+    };
+}
+
+export function parseDeletionPreview(raw: unknown): DeletionPreview {
+    const obj = requireObject(raw, "DeletionPreview");
+    const preview = requireObject(obj.deletionPreview, "DeletionPreview.deletionPreview");
+    return {
+        category: parseCategory(obj.category),
+        deletionPreview: {
+            budgetRows: requireNumber(preview, "budgetRows", "DeletionPreview.deletionPreview"),
+            transactions: requireNumber(preview, "transactions", "DeletionPreview.deletionPreview"),
+            lockedMonthsAffected: stringArray(
+                preview.lockedMonthsAffected,
+                "DeletionPreview.deletionPreview.lockedMonthsAffected",
+            ),
+        },
+    };
+}
+
+export function parseHardDeleteResult(raw: unknown): HardDeleteResult {
+    const obj = requireObject(raw, "HardDeleteResult");
+    return {
+        categoryId: requireString(obj, "categoryId", "HardDeleteResult"),
+        name: requireString(obj, "name", "HardDeleteResult"),
+        budgetRowsDeleted: requireNumber(obj, "budgetRowsDeleted", "HardDeleteResult"),
+        transactionsDeleted: requireNumber(obj, "transactionsDeleted", "HardDeleteResult"),
+    };
+}
+
+export function parseBudgetTarget(raw: unknown): BudgetTarget {
+    const obj = requireObject(raw, "BudgetTarget");
+    // Densification writes `amount=null` for cells with no walk-back history
+    // (architecture: "New category, no prior history"). Null means "no target";
+    // the UI surfaces it as $0 because BudgetPage already coerces with `?? 0`.
+    const rawAmount = obj.amount;
+    let amount: number;
+    if (rawAmount === null) {
+        amount = 0;
+    } else if (typeof rawAmount === "number") {
+        amount = rawAmount;
+    } else {
+        throw new Error(`BudgetTarget.amount must be a number or null, got ${typeof rawAmount}`);
+    }
+    return {
+        yearMonth: requireString(obj, "yearMonth", "BudgetTarget"),
+        categoryId: requireString(obj, "categoryId", "BudgetTarget"),
+        amount,
+        pinned: optionalBoolean(obj, "pinned", "BudgetTarget"),
+    };
+}
+
+export function parseBudgetTargetArray(raw: unknown): BudgetTarget[] {
+    return arrayOf(raw, parseBudgetTarget, "BudgetTarget[]");
+}
+
+function parseDownstreamPin(raw: unknown): { categoryId: string; yearMonth: string } {
+    const obj = requireObject(raw, "DownstreamPin");
+    return {
+        categoryId: requireString(obj, "categoryId", "DownstreamPin"),
+        yearMonth: requireString(obj, "yearMonth", "DownstreamPin"),
+    };
+}
+
+export function parsePinResult(raw: unknown): PinResult {
+    const obj = requireObject(raw, "PinResult");
+    const warnings = requireObject(obj.warnings, "PinResult.warnings");
+    return {
+        targets: arrayOf(obj.targets, parseBudgetTarget, "PinResult.targets"),
+        warnings: {
+            downstreamPins: arrayOf(warnings.downstreamPins, parseDownstreamPin, "PinResult.warnings.downstreamPins"),
+            pinMatchesCarriedValue: stringArray(
+                warnings.pinMatchesCarriedValue,
+                "PinResult.warnings.pinMatchesCarriedValue",
+            ),
+        },
+    };
+}
+
+export function parseTransaction(raw: unknown): Transaction {
+    const obj = requireObject(raw, "Transaction");
+    return {
+        yearMonth: requireString(obj, "yearMonth", "Transaction"),
+        sortId: requireString(obj, "sortId", "Transaction"),
+        transactionDate: requireString(obj, "transactionDate", "Transaction"),
+        description: requireString(obj, "description", "Transaction"),
+        amount: requireNumber(obj, "amount", "Transaction"),
+        categoryId: requireString(obj, "categoryId", "Transaction"),
+        createdAt: requireString(obj, "createdAt", "Transaction"),
+    };
+}
+
+export function parseTransactionArray(raw: unknown): Transaction[] {
+    return arrayOf(raw, parseTransaction, "Transaction[]");
+}
+
+function parseSummaryCategory(raw: unknown): SummaryCategory {
+    const obj = requireObject(raw, "SummaryCategory");
+    const historicalRaw = obj.historicalName;
+    let historicalName: string | null;
+    if (historicalRaw === null) {
+        historicalName = null;
+    } else if (typeof historicalRaw === "string") {
+        historicalName = historicalRaw;
+    } else {
+        throw new Error(`SummaryCategory.historicalName must be string or null, got ${typeof historicalRaw}`);
+    }
+    return {
+        categoryId: requireString(obj, "categoryId", "SummaryCategory"),
+        name: requireString(obj, "name", "SummaryCategory"),
+        historicalName,
+        budgeted: requireNumber(obj, "budgeted", "SummaryCategory"),
+        actual: requireNumber(obj, "actual", "SummaryCategory"),
+        delta: requireNumber(obj, "delta", "SummaryCategory"),
+    };
+}
+
+function parseSummaryTotals(raw: unknown): { budgeted: number; actual: number; delta: number } {
+    const obj = requireObject(raw, "Summary.totals");
+    return {
+        budgeted: requireNumber(obj, "budgeted", "Summary.totals"),
+        actual: requireNumber(obj, "actual", "Summary.totals"),
+        delta: requireNumber(obj, "delta", "Summary.totals"),
+    };
+}
+
+export function parseSummary(raw: unknown): Summary {
+    const obj = requireObject(raw, "Summary");
+    const state = requireString(obj, "state", "Summary");
+    if (state !== "EDITABLE" && state !== "GRACE" && state !== "LOCKED") {
+        throw new Error(`Summary.state: unexpected value '${state}'`);
+    }
+    return {
+        yearMonth: requireString(obj, "yearMonth", "Summary"),
+        state,
+        categories: arrayOf(obj.categories, parseSummaryCategory, "Summary.categories"),
+        totals: parseSummaryTotals(obj.totals),
+    };
+}
+
+function parseChanges(raw: unknown): Record<string, unknown> {
+    // The `changes` payload shape is action-shaped (architecture: "Audit entry changes
+    // payload"). CREATE/UPDATE/PIN/UNPIN use {before, after}. CATEGORY_HARD_DELETE uses
+    // {budgetRowsDeleted: N, transactionsDeleted: M, name: string}. The renderer
+    // branches on `action`; here we just preserve the shape.
+    return requireObject(raw, "AuditEntry.changes");
+}
+
+function parseAuditUser(raw: unknown): AuditUser {
+    const obj = requireObject(raw, "AuditEntry.user");
+    return {
+        sub: requireString(obj, "sub", "AuditEntry.user"),
+        email: requireString(obj, "email", "AuditEntry.user"),
+        username: requireString(obj, "username", "AuditEntry.user"),
+    };
+}
+
+function parseNullableYearMonth(raw: unknown): string | null {
+    // effectiveYearMonth is null for actions not scoped to a single month
+    // (e.g. CATEGORY_HARD_DELETE per the architecture doc).
+    if (raw === null) return null;
+    if (typeof raw !== "string") {
+        throw new Error(`AuditEntry.effectiveYearMonth must be a string or null, got ${typeof raw}`);
+    }
+    return raw;
+}
+
+export function parseAuditEntry(raw: unknown): AuditEntry {
+    const obj = requireObject(raw, "AuditEntry");
+    return {
+        sortId: requireString(obj, "sortId", "AuditEntry"),
+        changedAt: requireString(obj, "changedAt", "AuditEntry"),
+        effectiveYearMonth: parseNullableYearMonth(obj.effectiveYearMonth),
+        categoryId: requireString(obj, "categoryId", "AuditEntry"),
+        action: requireString(obj, "action", "AuditEntry"),
+        explanation: requireString(obj, "explanation", "AuditEntry"),
+        user: parseAuditUser(obj.user),
+        override: requireBoolean(obj, "override", "AuditEntry"),
+        changes: parseChanges(obj.changes),
+    };
+}
+
+export function parseAuditEntryArray(raw: unknown): AuditEntry[] {
+    return arrayOf(raw, parseAuditEntry, "AuditEntry[]");
+}
+
+function parseColumnMapping(raw: unknown): ColumnMapping {
+    const obj = requireObject(raw, "ColumnMapping");
+    return {
+        date: requireString(obj, "date", "ColumnMapping"),
+        description: requireString(obj, "description", "ColumnMapping"),
+        amount: requireString(obj, "amount", "ColumnMapping"),
+        amount_invert: optionalBoolean(obj, "amount_invert", "ColumnMapping"),
+    };
+}
+
+function parseParsedTransaction(raw: unknown): ParsedTransaction {
+    const obj = requireObject(raw, "ParsedTransaction");
+    return {
+        transactionDate: requireString(obj, "transactionDate", "ParsedTransaction"),
+        description: requireString(obj, "description", "ParsedTransaction"),
+        amount: requireNumber(obj, "amount", "ParsedTransaction"),
+        categoryId: requireString(obj, "categoryId", "ParsedTransaction"),
+        categoryName: requireString(obj, "categoryName", "ParsedTransaction"),
+    };
+}
+
+const _ROW_VALIDATION_ISSUES = new Set<string>(["missing_category", "locked_month"]);
+
+function parseRowValidation(raw: unknown): RowValidation {
+    const obj = requireObject(raw, "RowValidation");
+    const issuesRaw = stringArray(obj.issues, "RowValidation.issues");
+    return {
+        index: requireNumber(obj, "index", "RowValidation"),
+        issues: issuesRaw.map((s) => {
+            if (!_ROW_VALIDATION_ISSUES.has(s)) {
+                throw new Error(`RowValidation.issues: unknown issue '${s}'`);
+            }
+            return s as RowValidationIssue;
+        }),
+    };
+}
+
+export function parseUploadResult(raw: unknown): UploadResult {
+    const obj = requireObject(raw, "UploadResult");
+    return {
+        columnMapping: parseColumnMapping(obj.columnMapping),
+        transactions: arrayOf(obj.transactions, parseParsedTransaction, "UploadResult.transactions"),
+        validations: arrayOf(obj.validations, parseRowValidation, "UploadResult.validations"),
+    };
+}
+
+export function parseCommitResult(raw: unknown): CommitResult {
+    const obj = requireObject(raw, "CommitResult");
+    return {
+        count: requireNumber(obj, "count", "CommitResult"),
+        transactions: arrayOf(obj.transactions, parseTransaction, "CommitResult.transactions"),
+    };
+}
+
+/** Best-effort extraction of `validations` from a 409 response body string.
+ * Returns null if the body isn't the expected shape — the caller falls back
+ * to showing the raw error message.
+ */
+export function parseCommitValidationsFromError(responseBody: string): RowValidation[] | null {
+    try {
+        const raw = JSON.parse(responseBody);
+        if (!isObject(raw) || !Array.isArray(raw.validations)) return null;
+        return arrayOf(raw.validations, parseRowValidation, "CommitValidationError.validations");
+    } catch {
+        return null;
+    }
+}
+
+export function parseDeletedCount(raw: unknown): { deleted: number } {
+    const obj = requireObject(raw, "{deleted}");
+    return {
+        deleted: requireNumber(obj, "deleted", "{deleted}"),
+    };
+}
+
+export function parseDeletedGroup(raw: unknown): { groupId: string } {
+    const obj = requireObject(raw, "{groupId}");
+    return {
+        groupId: requireString(obj, "groupId", "{groupId}"),
+    };
+}

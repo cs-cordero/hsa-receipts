@@ -190,7 +190,7 @@ def check_hsa_eligibility(api_key: str, attachment_data: bytes, content_type: st
                 description=str(item["description"]),
                 short_description=str(item["short_description"]),
                 category=str(item.get("category", "Other")),
-                amount=float(amount) if amount is not None else None,
+                amount=float(amount) if isinstance(amount, int | float | str) else None,
                 provider=str(provider) if provider is not None else None,
                 service_date=str(service_date) if service_date is not None else None,
                 payment_date=str(payment_date) if payment_date is not None else None,

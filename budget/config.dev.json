@@ -1,0 +1,6 @@
+{
+    "cognitoDomain": "https://auth.corderohq.com",
+    "clientId": "2a09vghdoi7svdouvk1leus32v",
+    "stage": "dev",
+    "apiOrigin": "https://do7tbtrt21.execute-api.us-east-1.amazonaws.com"
+}

@@ -6,10 +6,19 @@ import json
 import mimetypes
 import sys
 from pathlib import Path
+from typing import cast
 
 import anthropic
+from anthropic.types import (
+    Base64ImageSourceParam,
+    Base64PDFSourceParam,
+    DocumentBlockParam,
+    ImageBlockParam,
+    TextBlock,
+    TextBlockParam,
+)
 
-from corderohq.claude_client import IMAGE_CONTENT_TYPES, SYSTEM_PROMPT
+from corderohq.claude_client import IMAGE_CONTENT_TYPES, SYSTEM_PROMPT, ImageMediaType
 
 SUPPORTED_CONTENT_TYPES = {
     "image/jpeg",
@@ -39,16 +48,27 @@ def main() -> None:
     data = args.file.read_bytes()
     data_b64 = base64.standard_b64encode(data).decode("ascii")
 
+    content_block: ImageBlockParam | DocumentBlockParam
     if content_type in IMAGE_CONTENT_TYPES:
-        content_block = {
-            "type": "image",
-            "source": {"type": "base64", "media_type": content_type, "data": data_b64},
-        }
+        content_block = ImageBlockParam(
+            type="image",
+            source=Base64ImageSourceParam(
+                type="base64",
+                media_type=cast(ImageMediaType, content_type),
+                data=data_b64,
+            ),
+        )
     else:
-        content_block = {
-            "type": "document",
-            "source": {"type": "base64", "media_type": "application/pdf", "data": data_b64},
-        }
+        content_block = DocumentBlockParam(
+            type="document",
+            source=Base64PDFSourceParam(type="base64", media_type="application/pdf", data=data_b64),
+        )
+
+    prompt = TextBlockParam(
+        type="text",
+        text="Please analyze this receipt or statement for HSA eligibility."
+        " Extract each out-of-pocket transaction separately.",
+    )
 
     client = anthropic.Anthropic(api_key=args.api_key)
     print(f"Sending {args.file.name} to {args.model}...\n")
@@ -57,19 +77,7 @@ def main() -> None:
         model=args.model,
         max_tokens=8192,
         system=SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    content_block,
-                    {
-                        "type": "text",
-                        "text": "Please analyze this receipt or statement for HSA eligibility."
-                        " Extract each out-of-pocket transaction separately.",
-                    },
-                ],
-            }
-        ],
+        messages=[{"role": "user", "content": [content_block, prompt]}],
     )
 
     print(f"Stop reason: {response.stop_reason}")
@@ -78,7 +86,7 @@ def main() -> None:
 
     response_text = ""
     for block in response.content:
-        if hasattr(block, "text"):
+        if isinstance(block, TextBlock):
             response_text = block.text
             break
 

@@ -110,7 +110,7 @@ async function handleCallback() {
         return false;
     }
 
-    const tokenUrl = `${CONFIG.cognitoDomain}/oauth2/token`;
+    const tokenUrl = "/oauth2/token";
     const body = new URLSearchParams({
         grant_type: "authorization_code",
         client_id: CONFIG.clientId,
@@ -168,7 +168,7 @@ async function refreshAccessToken() {
     const refreshToken = sessionStorage.getItem("refresh_token");
     if (!refreshToken) return false;
 
-    const tokenUrl = `${CONFIG.cognitoDomain}/oauth2/token`;
+    const tokenUrl = "/oauth2/token";
     const body = new URLSearchParams({
         grant_type: "refresh_token",
         client_id: CONFIG.clientId,

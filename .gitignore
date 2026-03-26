@@ -4,9 +4,11 @@ cdk.out/
 *.js
 *.d.ts
 *.js.map
+*.tsbuildinfo
 !eslint.config.mjs
 !prettier.config.mjs
 !web/**/*.js
+!budget/eslint.config.js
 
 # Python
 __pycache__/
@@ -35,6 +37,9 @@ uv.lock
 
 # Debug
 debug_local.py
+
+# Claude Code
+.claude/
 
 # OS
 .DS_Store

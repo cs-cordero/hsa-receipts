@@ -1,5 +1,6 @@
 """Manage the HSA receipt ledger (CSV file)."""
 
+import contextlib
 import csv
 import io
 from dataclasses import dataclass
@@ -93,10 +94,8 @@ def _next_id(ledger_csv: str) -> int:
     reader = csv.DictReader(io.StringIO(ledger_csv))
     max_id = 0
     for row in reader:
-        try:
+        with contextlib.suppress(ValueError):
             max_id = max(max_id, int(row.get("Id", "0")))
-        except ValueError:
-            pass
     return max_id + 1
 
 

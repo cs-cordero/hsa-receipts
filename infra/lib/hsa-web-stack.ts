@@ -49,9 +49,15 @@ export class HsaWebStack extends cdk.Stack {
         const webHandler = this.createLambda(props.dataBucket, props.processorFunction);
         this.createApiGateway(props, userPoolClient, webHandler);
 
-        // Deploy static web files to the shared assets bucket
+        // Deploy static web files to the shared assets bucket. `followSymlinks: EXTERNAL`
+        // resolves the favicon.svg symlink that points outside web/ (it lives at
+        // ../shared/favicon.svg so the HSA and budget apps can share one source).
         new s3deploy.BucketDeployment(this, "WebAssets", {
-            sources: [s3deploy.Source.asset("../web")],
+            sources: [
+                s3deploy.Source.asset("../web", {
+                    followSymlinks: cdk.SymlinkFollowMode.EXTERNAL,
+                }),
+            ],
             destinationBucket: props.assetsBucket,
             destinationKeyPrefix: "hsa",
             distribution: props.distribution,

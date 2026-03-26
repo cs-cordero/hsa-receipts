@@ -7,7 +7,7 @@ import * as route53 from "aws-cdk-lib/aws-route53";
 import * as route53Targets from "aws-cdk-lib/aws-route53-targets";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import type { Construct } from "constructs";
-import { AUTH_DOMAIN, HSA_DOMAIN } from "./constants";
+import { AUTH_DOMAIN, BUDGET_DOMAIN, HSA_DOMAIN } from "./constants";
 
 /**
  * Shared platform infrastructure for all corderohq.com apps.
@@ -22,8 +22,10 @@ import { AUTH_DOMAIN, HSA_DOMAIN } from "./constants";
  * - Route 53 A record: auth.corderohq.com → Cognito
  * - S3 bucket: corderohq-assets (static web assets, shared across apps)
  * - CloudFront Function: directory-index-rewrite (URL rewriting for clean paths)
- * - CloudFront distribution: hsa.corderohq.com → S3 /hsa/ (OAC, HTTPS redirect)
+ * - CloudFront distribution: hsa.corderohq.com → S3 /hsa/ (OAC, HTTPS redirect, /oauth2/* → Cognito proxy)
  * - Route 53 A record: hsa.corderohq.com → CloudFront
+ * - Route 53 hosted zone: budget.corderohq.com (delegated from Porkbun)
+ * - ACM certificate: budget.corderohq.com + *.budget.corderohq.com (DNS validated)
  */
 export class PlatformStack extends cdk.Stack {
     userPool!: cognito.UserPool;
@@ -31,6 +33,8 @@ export class PlatformStack extends cdk.Stack {
     distribution!: cloudfront.Distribution;
     hsaZone!: route53.HostedZone;
     hsaCertificate!: acm.Certificate;
+    budgetZone!: route53.HostedZone;
+    budgetCertificate!: acm.Certificate;
 
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
@@ -39,6 +43,7 @@ export class PlatformStack extends cdk.Stack {
 
         const authZone = this.createDnsZones();
         const authCertificate = this.createCertificates(authZone);
+        this.createBudgetDnsAndCerts();
         const cognitoDomain = this.createCognito(authCertificate);
         this.createCloudFront();
         this.createDnsRecords(authZone, cognitoDomain);
@@ -146,10 +151,31 @@ export class PlatformStack extends cdk.Stack {
                     },
                 ],
             },
+            additionalBehaviors: {
+                "/oauth2/*": {
+                    origin: new origins.HttpOrigin(AUTH_DOMAIN),
+                    viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                    cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+                    originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+                    allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+                },
+            },
             defaultRootObject: "index.html",
             priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
             domainNames: [HSA_DOMAIN],
             certificate: this.hsaCertificate,
+        });
+    }
+
+    private createBudgetDnsAndCerts(): void {
+        this.budgetZone = new route53.HostedZone(this, "BudgetZone", {
+            zoneName: BUDGET_DOMAIN,
+        });
+
+        this.budgetCertificate = new acm.Certificate(this, "BudgetCertificate", {
+            domainName: BUDGET_DOMAIN,
+            subjectAlternativeNames: [`*.${BUDGET_DOMAIN}`],
+            validation: acm.CertificateValidation.fromDns(this.budgetZone),
         });
     }
 

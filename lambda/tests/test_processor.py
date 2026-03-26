@@ -210,9 +210,7 @@ class TestProcessAttachment:
         mock_convert: MagicMock,
         mock_store_receipt: MagicMock,
     ) -> None:
-        result = process_attachment(
-            b"data", "image/jpeg", "receipt.jpg", False, "key", "bucket", store_only=True
-        )
+        result = process_attachment(b"data", "image/jpeg", "receipt.jpg", False, "key", "bucket", store_only=True)
 
         assert len(result.entries) == 0
         assert len(result.rejections) == 0

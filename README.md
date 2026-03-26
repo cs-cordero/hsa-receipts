@@ -67,4 +67,4 @@ npx tsc --noEmit
 
 ## Documentation
 
-See `docs/architecture.md` for infrastructure details and `docs/user_guide.md` for setup, deployment, and day-to-day usage.
+See `docs/hsa-architecture.md` (HSA receipts app) and `docs/budget-architecture.md` (family budget app) for infrastructure details, and `docs/user_guide.md` for setup, deployment, and day-to-day usage.
