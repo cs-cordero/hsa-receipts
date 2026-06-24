@@ -1,6 +1,6 @@
 """Budget densification and walk-back resolution.
 
-Storage model (see docs/budget-architecture.md "Carry-Forward"):
+Storage model (see docs/personal-finance-architecture.md "Carry-Forward"):
 
 - Past months, the current month, and the grace month are **dense**: one row per
   active-at-densification-time category, plus any later explicit edits.

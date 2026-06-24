@@ -525,10 +525,7 @@ export default function CategoriesPage() {
                                             >
                                                 Save
                                             </button>
-                                            <button
-                                                className="small-btn"
-                                                onClick={() => setEditingGroupId(null)}
-                                            >
+                                            <button className="small-btn" onClick={() => setEditingGroupId(null)}>
                                                 Cancel
                                             </button>
                                         </>
@@ -574,107 +571,107 @@ export default function CategoriesPage() {
                                         {groupCats.length} categor{groupCats.length === 1 ? "y" : "ies"} hidden
                                     </p>
                                 ) : (
-                                <table className="data-table category-group-table">
-                                    <thead>
-                                        <tr>
-                                            <th></th>
-                                            <th>Name</th>
-                                            <th>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <SortableContext
-                                        items={groupCats.map((c) => `cat:${c.categoryId}`)}
-                                        strategy={verticalListSortingStrategy}
-                                    >
-                                        <tbody>
-                                            {groupCats.length === 0 && (
-                                                <tr>
-                                                    <td colSpan={3} className="empty">
-                                                        No categories in this group yet
-                                                    </td>
-                                                </tr>
-                                            )}
-                                            {groupCats.map((cat) => (
-                                                <SortableCategoryRow key={cat.categoryId} category={cat}>
-                                                    <td>
-                                                        {editingId === cat.categoryId ? (
-                                                            <span className="edit-actions">
-                                                                <input
-                                                                    type="text"
-                                                                    value={editName}
-                                                                    onChange={(e) => setEditName(e.target.value)}
-                                                                    autoFocus
-                                                                    onKeyDown={(e) => {
-                                                                        if (e.key === "Enter")
-                                                                            handleSaveCategoryEdit(cat);
-                                                                        if (e.key === "Escape") setEditingId(null);
-                                                                    }}
-                                                                />
-                                                                <select
-                                                                    value={editGroupId}
-                                                                    title="Move to group on Save"
-                                                                    onChange={(e) => setEditGroupId(e.target.value)}
-                                                                >
-                                                                    {activeGroups.map((g) => (
-                                                                        <option key={g.groupId} value={g.groupId}>
-                                                                            {g.name}
-                                                                        </option>
-                                                                    ))}
-                                                                </select>
-                                                            </span>
-                                                        ) : (
-                                                            cat.name
-                                                        )}
-                                                    </td>
-                                                    <td className="actions">
-                                                        {editingId === cat.categoryId ? (
-                                                            <>
+                                    <table className="data-table category-group-table">
+                                        <thead>
+                                            <tr>
+                                                <th></th>
+                                                <th>Name</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <SortableContext
+                                            items={groupCats.map((c) => `cat:${c.categoryId}`)}
+                                            strategy={verticalListSortingStrategy}
+                                        >
+                                            <tbody>
+                                                {groupCats.length === 0 && (
+                                                    <tr>
+                                                        <td colSpan={3} className="empty">
+                                                            No categories in this group yet
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                                {groupCats.map((cat) => (
+                                                    <SortableCategoryRow key={cat.categoryId} category={cat}>
+                                                        <td>
+                                                            {editingId === cat.categoryId ? (
+                                                                <span className="edit-actions">
+                                                                    <input
+                                                                        type="text"
+                                                                        value={editName}
+                                                                        onChange={(e) => setEditName(e.target.value)}
+                                                                        autoFocus
+                                                                        onKeyDown={(e) => {
+                                                                            if (e.key === "Enter")
+                                                                                handleSaveCategoryEdit(cat);
+                                                                            if (e.key === "Escape") setEditingId(null);
+                                                                        }}
+                                                                    />
+                                                                    <select
+                                                                        value={editGroupId}
+                                                                        title="Move to group on Save"
+                                                                        onChange={(e) => setEditGroupId(e.target.value)}
+                                                                    >
+                                                                        {activeGroups.map((g) => (
+                                                                            <option key={g.groupId} value={g.groupId}>
+                                                                                {g.name}
+                                                                            </option>
+                                                                        ))}
+                                                                    </select>
+                                                                </span>
+                                                            ) : (
+                                                                cat.name
+                                                            )}
+                                                        </td>
+                                                        <td className="actions">
+                                                            {editingId === cat.categoryId ? (
+                                                                <>
+                                                                    <button
+                                                                        className="small-btn"
+                                                                        onClick={() => handleSaveCategoryEdit(cat)}
+                                                                    >
+                                                                        Save
+                                                                    </button>
+                                                                    <button
+                                                                        className="small-btn"
+                                                                        onClick={() => setEditingId(null)}
+                                                                    >
+                                                                        Cancel
+                                                                    </button>
+                                                                </>
+                                                            ) : cat.active ? (
+                                                                <>
+                                                                    <button
+                                                                        className="small-btn"
+                                                                        onClick={() => {
+                                                                            setEditingId(cat.categoryId);
+                                                                            setEditName(cat.name);
+                                                                            setEditGroupId(cat.groupId);
+                                                                        }}
+                                                                    >
+                                                                        Edit
+                                                                    </button>
+                                                                    <button
+                                                                        className="small-btn delete-btn"
+                                                                        onClick={() => handleDeactivateCategory(cat)}
+                                                                    >
+                                                                        Deactivate
+                                                                    </button>
+                                                                </>
+                                                            ) : (
                                                                 <button
                                                                     className="small-btn"
-                                                                    onClick={() => handleSaveCategoryEdit(cat)}
+                                                                    onClick={() => handleReactivateCategory(cat)}
                                                                 >
-                                                                    Save
+                                                                    Reactivate
                                                                 </button>
-                                                                <button
-                                                                    className="small-btn"
-                                                                    onClick={() => setEditingId(null)}
-                                                                >
-                                                                    Cancel
-                                                                </button>
-                                                            </>
-                                                        ) : cat.active ? (
-                                                            <>
-                                                                <button
-                                                                    className="small-btn"
-                                                                    onClick={() => {
-                                                                        setEditingId(cat.categoryId);
-                                                                        setEditName(cat.name);
-                                                                        setEditGroupId(cat.groupId);
-                                                                    }}
-                                                                >
-                                                                    Edit
-                                                                </button>
-                                                                <button
-                                                                    className="small-btn delete-btn"
-                                                                    onClick={() => handleDeactivateCategory(cat)}
-                                                                >
-                                                                    Deactivate
-                                                                </button>
-                                                            </>
-                                                        ) : (
-                                                            <button
-                                                                className="small-btn"
-                                                                onClick={() => handleReactivateCategory(cat)}
-                                                            >
-                                                                Reactivate
-                                                            </button>
-                                                        )}
-                                                    </td>
-                                                </SortableCategoryRow>
-                                            ))}
-                                        </tbody>
-                                    </SortableContext>
-                                </table>
+                                                            )}
+                                                        </td>
+                                                    </SortableCategoryRow>
+                                                ))}
+                                            </tbody>
+                                        </SortableContext>
+                                    </table>
                                 )}
                             </SortableGroupRow>
                         );

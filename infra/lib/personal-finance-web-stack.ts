@@ -17,13 +17,13 @@ import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
 import * as scheduler from "aws-cdk-lib/aws-scheduler";
 import type { Construct } from "constructs";
 import type { Stage } from "./constants";
-import { AUTH_DOMAIN, budgetDomain, budgetOrigin } from "./constants";
+import { AUTH_DOMAIN, personalFinanceDomain, personalFinanceOrigin } from "./constants";
 
-interface BudgetWebStackProps extends cdk.StackProps {
+interface PersonalFinanceWebStackProps extends cdk.StackProps {
     readonly stage: Stage;
     readonly userPool: cognito.IUserPool;
-    readonly budgetZone: route53.IHostedZone;
-    readonly budgetCertificate: acm.ICertificate;
+    readonly personalFinanceZone: route53.IHostedZone;
+    readonly personalFinanceCertificate: acm.ICertificate;
     readonly categoryGroupTable: dynamodb.ITable;
     readonly categoryTable: dynamodb.ITable;
     readonly budgetTable: dynamodb.ITable;
@@ -32,46 +32,46 @@ interface BudgetWebStackProps extends cdk.StackProps {
 }
 
 /**
- * Budget web app — React frontend served via CloudFront, API via API Gateway.
+ * Personal finance web app — React frontend served via CloudFront, API via API Gateway.
  *
  * AWS resources:
- * - Cognito User Pool Client: budget-web-app-{stage} (authorization code grant, PKCE)
- * - Cognito User Pool Group: budget-admin-{stage} (admin override authorization)
- * - CloudWatch log group: /aws/lambda/budget-handler-{stage}
- * - Lambda function: budget-handler-{stage} (Python 3.13)
- * - IAM policy: DynamoDB read/write on all budget tables, SSM GetParameter for API key
+ * - Cognito User Pool Client: personal-finance-web-app-{stage} (authorization code grant, PKCE)
+ * - Cognito User Pool Group: budget-admin-{stage} (admin override authorization for budget feature)
+ * - CloudWatch log group: /aws/lambda/personal-finance-handler-{stage}
+ * - Lambda function: personal-finance-handler-{stage} (Python 3.13)
+ * - IAM policy: DynamoDB read/write on all personal-finance tables, SSM GetParameter for API key
  * - CloudWatch log group: /aws/lambda/budget-scheduled-densify-{stage}
  * - Lambda function: budget-scheduled-densify-{stage} (Python 3.13, cron-driven)
  * - IAM role: scheduler invoke role for the densify Lambda
  * - EventBridge Schedule: budget-scheduled-densify-{stage} (cron(0 0 1 * ? *) America/New_York)
- * - API Gateway HTTP API: budget-api-{stage} (Cognito JWT authorizer)
+ * - API Gateway HTTP API: personal-finance-api-{stage} (Cognito JWT authorizer)
  * - API Gateway routes: /api/category-groups (+ /{groupId} rename / deactivate / reorder), /api/categories (+ /{categoryId} GET-preview / PUT / DELETE / reactivate / deactivate / reorder), /api/budget/{yearMonth} (+ /replace, /pin), /api/transactions (+ /upload, /commit, /update, /delete), /api/summary, /api/audit-log
- * - S3 bucket: budget-assets-{stage}-{account}-{region} (frontend assets)
+ * - S3 bucket: personal-finance-assets-{stage}-{account}-{region} (frontend assets)
  * - CloudFront distribution: S3 origin (frontend) + API Gateway origin (/api/*) + Cognito proxy (/oauth2/*)
  * - Route 53 A record: {stage domain} → CloudFront
- * - S3 BucketDeployment: budget/dist → assets bucket (CloudFront invalidation, config.json injection)
+ * - S3 BucketDeployment: personal-finance/dist → assets bucket (CloudFront invalidation, config.json injection)
  */
-export class BudgetWebStack extends cdk.Stack {
-    constructor(scope: Construct, id: string, props: BudgetWebStackProps) {
+export class PersonalFinanceWebStack extends cdk.Stack {
+    constructor(scope: Construct, id: string, props: PersonalFinanceWebStackProps) {
         super(scope, id, props);
 
         const { stage } = props;
 
-        cdk.Tags.of(this).add("project", "budget");
+        cdk.Tags.of(this).add("project", "personal-finance");
         cdk.Tags.of(this).add("stage", stage);
 
         const userPoolClient = this.createUserPoolClient(props.userPool, stage);
         this.createAdminGroup(props.userPool, stage);
-        const budgetHandler = this.createLambda(props, stage);
+        const apiHandler = this.createLambda(props, stage);
         this.createScheduledDensifier(props, stage);
-        const httpApi = this.createApiGateway(props, userPoolClient, budgetHandler, stage);
-        const { distribution, assetsBucket } = this.createCloudFront(httpApi, stage, props.budgetCertificate);
-        this.createDnsRecords(props.budgetZone, distribution, stage);
+        const httpApi = this.createApiGateway(props, userPoolClient, apiHandler, stage);
+        const { distribution, assetsBucket } = this.createCloudFront(httpApi, stage, props.personalFinanceCertificate);
+        this.createDnsRecords(props.personalFinanceZone, distribution, stage);
         this.deployFrontend(assetsBucket, distribution, userPoolClient, stage);
 
         new cdk.CfnOutput(this, "HttpApiUrl", {
             value: httpApi.apiEndpoint,
-            description: `Budget HTTP API base URL (${stage}) — used as Vite /api proxy target in dev`,
+            description: `Personal finance HTTP API base URL (${stage}) — used as Vite /api proxy target in dev`,
         });
     }
 
@@ -79,12 +79,12 @@ export class BudgetWebStack extends cdk.Stack {
         new cognito.CfnUserPoolGroup(this, "BudgetAdminGroup", {
             userPoolId: userPool.userPoolId,
             groupName: `budget-admin-${stage}`,
-            description: `Admins for budget app (${stage}). Members can override locked-month rules and perform hard deletes.`,
+            description: `Budget admins (${stage}). Members can override locked-month rules and perform hard deletes.`,
         });
     }
 
     private createUserPoolClient(userPool: cognito.IUserPool, stage: Stage): cognito.UserPoolClient {
-        const origin = budgetOrigin(stage);
+        const origin = personalFinanceOrigin(stage);
         const callbackUrls = [`${origin}/callback`];
         const logoutUrls = [`${origin}/`];
         if (stage === "dev") {
@@ -94,7 +94,7 @@ export class BudgetWebStack extends cdk.Stack {
 
         return new cognito.UserPoolClient(this, "WebAppClient", {
             userPool,
-            userPoolClientName: `budget-web-app-${stage}`,
+            userPoolClientName: `personal-finance-web-app-${stage}`,
             generateSecret: false,
             preventUserExistenceErrors: true,
             enableTokenRevocation: true,
@@ -111,17 +111,17 @@ export class BudgetWebStack extends cdk.Stack {
         });
     }
 
-    private createLambda(props: BudgetWebStackProps, stage: Stage): lambda.Function {
-        const logGroup = new logs.LogGroup(this, "BudgetHandlerLogGroup", {
-            logGroupName: `/aws/lambda/budget-handler-${stage}`,
+    private createLambda(props: PersonalFinanceWebStackProps, stage: Stage): lambda.Function {
+        const logGroup = new logs.LogGroup(this, "ApiHandlerLogGroup", {
+            logGroupName: `/aws/lambda/personal-finance-handler-${stage}`,
             retention: logs.RetentionDays.ONE_MONTH,
             removalPolicy: cdk.RemovalPolicy.DESTROY,
         });
 
-        const budgetHandler = new lambda.Function(this, "BudgetHandler", {
-            functionName: `budget-handler-${stage}`,
+        const apiHandler = new lambda.Function(this, "ApiHandler", {
+            functionName: `personal-finance-handler-${stage}`,
             runtime: lambda.Runtime.PYTHON_3_13,
-            handler: "corderohq.budget_handler.handler",
+            handler: "corderohq.personal_finance_handler.handler",
             code: lambda.Code.fromAsset("../lambda", {
                 bundling: {
                     image: lambda.Runtime.PYTHON_3_13.bundlingImage,
@@ -130,7 +130,7 @@ export class BudgetWebStack extends cdk.Stack {
                         "bash",
                         "-c",
                         [
-                            "pip install -r requirements-budget.txt -t /asset-output",
+                            "pip install -r requirements-personal-finance.txt -t /asset-output",
                             "cp -r src/corderohq /asset-output/",
                         ].join(" && "),
                     ],
@@ -145,18 +145,18 @@ export class BudgetWebStack extends cdk.Stack {
                 BUDGET_TABLE_NAME: props.budgetTable.tableName,
                 BUDGET_AUDIT_LOG_TABLE_NAME: props.budgetAuditLogTable.tableName,
                 TRANSACTIONS_TABLE_NAME: props.transactionsTable.tableName,
-                SSM_API_KEY_PARAM: `/budget/${stage}/anthropic-api-key`,
+                SSM_API_KEY_PARAM: `/personal-finance/${stage}/anthropic-api-key`,
                 STAGE: stage,
             },
         });
 
-        props.categoryGroupTable.grantReadWriteData(budgetHandler);
-        props.categoryTable.grantReadWriteData(budgetHandler);
-        props.budgetTable.grantReadWriteData(budgetHandler);
-        props.budgetAuditLogTable.grantReadWriteData(budgetHandler);
-        props.transactionsTable.grantReadWriteData(budgetHandler);
+        props.categoryGroupTable.grantReadWriteData(apiHandler);
+        props.categoryTable.grantReadWriteData(apiHandler);
+        props.budgetTable.grantReadWriteData(apiHandler);
+        props.budgetAuditLogTable.grantReadWriteData(apiHandler);
+        props.transactionsTable.grantReadWriteData(apiHandler);
 
-        budgetHandler.addToRolePolicy(
+        apiHandler.addToRolePolicy(
             new iam.PolicyStatement({
                 actions: ["ssm:GetParameter"],
                 resources: [
@@ -164,7 +164,7 @@ export class BudgetWebStack extends cdk.Stack {
                         {
                             service: "ssm",
                             resource: "parameter",
-                            resourceName: "budget/*",
+                            resourceName: "personal-finance/*",
                         },
                         this,
                     ),
@@ -172,10 +172,10 @@ export class BudgetWebStack extends cdk.Stack {
             }),
         );
 
-        return budgetHandler;
+        return apiHandler;
     }
 
-    private createScheduledDensifier(props: BudgetWebStackProps, stage: Stage): void {
+    private createScheduledDensifier(props: PersonalFinanceWebStackProps, stage: Stage): void {
         // Dedicated Lambda for the cron path. Reuses the same code package as the
         // API handler (bundled identically) but invokes corderohq.scheduled_densify.handler.
         // Densification doesn't touch transactions or audit, so the IAM scope is narrower.
@@ -197,7 +197,7 @@ export class BudgetWebStack extends cdk.Stack {
                         "bash",
                         "-c",
                         [
-                            "pip install -r requirements-budget.txt -t /asset-output",
+                            "pip install -r requirements-personal-finance.txt -t /asset-output",
                             "cp -r src/corderohq /asset-output/",
                         ].join(" && "),
                     ],
@@ -238,30 +238,27 @@ export class BudgetWebStack extends cdk.Stack {
     }
 
     private createApiGateway(
-        props: BudgetWebStackProps,
+        props: PersonalFinanceWebStackProps,
         userPoolClient: cognito.UserPoolClient,
-        budgetHandler: lambda.Function,
+        apiHandler: lambda.Function,
         stage: Stage,
     ): apigatewayv2.HttpApi {
         const authorizer = new apigatewayv2Authorizers.HttpUserPoolAuthorizer("CognitoAuthorizer", props.userPool, {
             userPoolClients: [userPoolClient],
         });
 
-        const integration = new apigatewayv2Integrations.HttpLambdaIntegration(
-            "BudgetHandlerIntegration",
-            budgetHandler,
-        );
+        const integration = new apigatewayv2Integrations.HttpLambdaIntegration("ApiHandlerIntegration", apiHandler);
 
         const httpApi = new apigatewayv2.HttpApi(this, "HttpApi", {
-            apiName: `budget-api-${stage}`,
-            description: `Budget API (${stage})`,
+            apiName: `personal-finance-api-${stage}`,
+            description: `Personal finance API (${stage})`,
             defaultAuthorizer: authorizer,
         });
 
         // Every API Gateway v2 HTTP API path must be declared explicitly — there's no
         // catch-all behavior. If a path isn't here, API Gateway returns 404 before the
         // Lambda dispatcher ever sees the request. Keep this list in lockstep with the
-        // routes branched on in budget_handler.handler.
+        // routes branched on in personal_finance_handler.handler.
         const routes: { path: string; methods: apigatewayv2.HttpMethod[] }[] = [
             // Category groups (CP12)
             { path: "/api/category-groups", methods: [apigatewayv2.HttpMethod.GET, apigatewayv2.HttpMethod.POST] },
@@ -316,16 +313,19 @@ export class BudgetWebStack extends cdk.Stack {
     private createCloudFront(
         httpApi: apigatewayv2.HttpApi,
         stage: Stage,
-        budgetCertificate: acm.ICertificate,
+        personalFinanceCertificate: acm.ICertificate,
     ): { distribution: cloudfront.Distribution; assetsBucket: s3.Bucket } {
-        const domain = budgetDomain(stage);
-        const removalPolicy = stage === "prod" ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY;
+        const domain = personalFinanceDomain(stage);
 
+        // The assets bucket only holds the built React frontend + config.json — everything
+        // in it is reproducible from `npm run build` + a redeploy, so DESTROY in both
+        // stages. No RETAIN gymnastics needed on stack destroy.
         const assetsBucket = new s3.Bucket(this, "AssetsBucket", {
-            bucketName: `budget-assets-${stage}-${this.account}-${this.region}`,
+            bucketName: `personal-finance-assets-${stage}-${this.account}-${this.region}`,
             blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
             encryption: s3.BucketEncryption.S3_MANAGED,
-            removalPolicy,
+            removalPolicy: cdk.RemovalPolicy.DESTROY,
+            autoDeleteObjects: true,
         });
 
         // Origin request policy for API Gateway — forward all viewer headers (including Authorization)
@@ -334,7 +334,7 @@ export class BudgetWebStack extends cdk.Stack {
         const apiOriginDomain = `${httpApi.httpApiId}.execute-api.${this.region}.amazonaws.com`;
 
         const distribution = new cloudfront.Distribution(this, "Distribution", {
-            comment: `Budget app (${stage})`,
+            comment: `Personal finance app (${stage})`,
             defaultBehavior: {
                 origin: origins.S3BucketOrigin.withOriginAccessControl(assetsBucket),
                 viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -371,7 +371,7 @@ export class BudgetWebStack extends cdk.Stack {
             ],
             priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
             domainNames: [domain],
-            certificate: budgetCertificate,
+            certificate: personalFinanceCertificate,
         });
 
         return { distribution, assetsBucket };
@@ -385,7 +385,7 @@ export class BudgetWebStack extends cdk.Stack {
     ): void {
         new s3deploy.BucketDeployment(this, "FrontendDeployment", {
             sources: [
-                s3deploy.Source.asset("../budget/dist"),
+                s3deploy.Source.asset("../personal-finance/dist"),
                 s3deploy.Source.jsonData("config.json", {
                     cognitoDomain: "https://auth.corderohq.com",
                     clientId: userPoolClient.userPoolClientId,
@@ -398,19 +398,19 @@ export class BudgetWebStack extends cdk.Stack {
 
         new cdk.CfnOutput(this, "UserPoolClientId", {
             value: userPoolClient.userPoolClientId,
-            description: `Budget app Cognito client ID (${stage})`,
+            description: `Personal finance app Cognito client ID (${stage})`,
         });
     }
 
     private createDnsRecords(
-        budgetZone: route53.IHostedZone,
+        personalFinanceZone: route53.IHostedZone,
         distribution: cloudfront.Distribution,
         stage: Stage,
     ): void {
-        const domain = budgetDomain(stage);
+        const domain = personalFinanceDomain(stage);
 
         new route53.ARecord(this, "CloudFrontAlias", {
-            zone: budgetZone,
+            zone: personalFinanceZone,
             recordName: domain,
             target: route53.RecordTarget.fromAlias(new route53Targets.CloudFrontTarget(distribution)),
         });

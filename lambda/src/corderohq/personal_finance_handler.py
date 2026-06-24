@@ -1,4 +1,4 @@
-"""API Gateway Lambda handler for the budget app."""
+"""API Gateway Lambda handler for the personal finance app."""
 
 import base64
 import csv
@@ -7,8 +7,8 @@ import json
 import logging
 import re
 from datetime import UTC, datetime
-from zoneinfo import ZoneInfo
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from corderohq.aws.dynamodb import (
     AuditLogTable,
@@ -120,7 +120,7 @@ def _ensure_hydrated(now: datetime) -> None:
     Idempotent and cheap when the table is already current — densify scans and
     returns 0 writes. Called at the top of every handler whose correctness
     depends on dense rows for past/current months (reads, /replace, /pin,
-    category create). See docs/budget-architecture.md "Densification".
+    category create). See docs/personal-finance-architecture.md "Densification".
     """
     densify(_BUDGET_TABLE, _CATEGORY_TABLE, _year_month_of(now))
 
@@ -212,7 +212,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         else:
             return _response(404, "Not found")
     except Exception:
-        LOGGER.exception("Unhandled error in budget handler")
+        LOGGER.exception("Unhandled error in personal finance handler")
         return _response(500, "Internal server error")
 
 
@@ -316,7 +316,7 @@ def _deactivate_category(
 
     The architecture treats "deactivation itself" as not audited (no DEACTIVATE event)
     but the UNPIN entries on dropped pins ARE recorded so the budget-target log stays
-    complete. See docs/budget-architecture.md "Audit scope".
+    complete. See docs/personal-finance-architecture.md "Audit scope".
     """
     body = _parse_json_body(event) or {}
     confirm = bool(body.get("confirm", False))
@@ -542,9 +542,7 @@ def _delete_category_group(group_id: str) -> dict[str, Any]:
 
     cats_in_group = [c for c in _CATEGORY_TABLE.list_all() if c.get("groupId") == group_id]
     active_blockers = [
-        {"categoryId": c["categoryId"], "name": c["name"]}
-        for c in cats_in_group
-        if c.get("active", True)
+        {"categoryId": c["categoryId"], "name": c["name"]} for c in cats_in_group if c.get("active", True)
     ]
     if active_blockers:
         return _json_response(
@@ -626,9 +624,7 @@ def _get_budget(year_month: str, now: datetime) -> dict[str, Any]:
     return _json_response(200, json.dumps(targets, default=_json_default))
 
 
-def _post_budget_replace(
-    event: dict[str, Any], year_month: str, user: dict[str, str], now: datetime
-) -> dict[str, Any]:
+def _post_budget_replace(event: dict[str, Any], year_month: str, user: dict[str, str], now: datetime) -> dict[str, Any]:
     """Replace-all write for a dense month (current, grace, or locked-via-override).
 
     Architecture invariants enforced here:
@@ -728,9 +724,7 @@ def _post_budget_replace(
     return _json_response(200, json.dumps(items, default=_json_default))
 
 
-def _post_budget_pin(
-    event: dict[str, Any], year_month: str, user: dict[str, str], now: datetime
-) -> dict[str, Any]:
+def _post_budget_pin(event: dict[str, Any], year_month: str, user: dict[str, str], now: datetime) -> dict[str, Any]:
     """Pin / unpin future-month rows.
 
     Editability: `year_month` must be EDITABLE AND strictly in the future.
@@ -1234,9 +1228,7 @@ def _resolve_override(event: dict[str, Any], body: dict[str, Any]) -> tuple[bool
     return (True, None)
 
 
-def _check_year_month_editable(
-    year_month: str, override_active: bool, now: datetime
-) -> dict[str, Any] | None:
+def _check_year_month_editable(year_month: str, override_active: bool, now: datetime) -> dict[str, Any] | None:
     """Return a 409 response dict if the year-month is locked, else None.
 
     `override_active` skips the check entirely.

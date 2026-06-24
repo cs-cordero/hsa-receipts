@@ -3,10 +3,11 @@ import { IS_DEV } from "../dev";
 import { clearSimulatedDate, getSimulatedDate, setSimulatedDate } from "../simulated_date";
 
 export default function DevBanner() {
-    if (!IS_DEV) return null;
-
     const current = getSimulatedDate();
     const [draft, setDraft] = useState<string>(current ?? "");
+
+    if (!IS_DEV) return null;
+
     const simulating = current !== null;
 
     // Future-only: simulating into the past would let densification cold-start at

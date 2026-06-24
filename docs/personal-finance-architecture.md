@@ -1,15 +1,15 @@
-# Architecture - Family Budget App
+# Architecture - Personal Finance App
 
 ## What This Project Does
 
-A monthly household budgeting tool. Users log in, set per-category budget targets for a given month, upload bank/credit-card CSV exports to populate transactions, and review actuals vs. budget. Budget edits are recorded in an audit log with a required explanation. CSV imports use an LLM to identify the date/description/amount columns and to auto-categorize each transaction against the user's active category list.
+A personal finance tool for the family. Today the app's only feature is monthly household budgeting: users log in, set per-category budget targets for a given month, upload bank/credit-card CSV exports to populate transactions, and review actuals vs. budget. Budget edits are recorded in an audit log with a required explanation. CSV imports use an LLM to identify the date/description/amount columns and to auto-categorize each transaction against the user's active category list. Future features (e.g. Monte Carlo net worth simulation) will live in this same app under their own feature folders.
 
 Budget targets and transactions are constrained to **editable year-months** (current, the previous month while still in its 7-day grace period, and the next 12 months). Locked year-months are read-only by default; an authenticated **admin override** lets privileged users mutate them. Budget-target mutations via override are recorded in the audit log; transaction mutations are not (see **Audit scope**).
 
 ## Project Layout
 
 ```
-budget/              React + TypeScript frontend (Vite)
+personal-finance/    React + TypeScript frontend (Vite)
     src/
         pages/       Top-level route pages
         components/  Shared UI components
@@ -17,23 +17,23 @@ budget/              React + TypeScript frontend (Vite)
         auth.ts      Cognito PKCE auth + token refresh
         ...
 lambda/src/corderohq/
-    budget_handler.py      Lambda entrypoint + HTTP routing
+    personal_finance_handler.py  Lambda entrypoint + HTTP routing
     budget/csv_import.py   LLM-driven CSV column mapping + categorization
     aws/dynamodb.py        Table wrappers and summary computation
 infra/lib/
-    budget-dynamodb-stack.ts   DynamoDB tables
-    budget-web-stack.ts        Cognito client, Lambda, API Gateway, CloudFront
+    personal-finance-dynamodb-stack.ts   DynamoDB tables
+    personal-finance-web-stack.ts        Cognito client, Lambda, API Gateway, CloudFront
 ```
 
 ## Infrastructure Overview
 
 The infrastructure is split into two CDK stacks that build on the shared `PlatformStack` (DNS, TLS, Cognito user pool).
 
-### BudgetDynamoDbStack
+### PersonalFinanceDynamoDbStack
 
-Owns the four DynamoDB tables. Separated from the web stack so app redeploys don't risk the data. All tables are pay-per-request with point-in-time recovery enabled. Removal policy is `RETAIN` in prod and `DESTROY` in dev.
+Owns the DynamoDB tables for the personal finance app. Separated from the web stack so app redeploys don't risk the data. All tables are pay-per-request with point-in-time recovery enabled. Removal policy is `RETAIN` in prod and `DESTROY` in dev.
 
-### BudgetWebStack
+### PersonalFinanceWebStack
 
 The application layer. Creates a Cognito app client (PKCE, no client secret), a Python 3.13 Lambda handler with DynamoDB read/write and SSM `GetParameter` permissions, an API Gateway HTTP API with a Cognito JWT authorizer, and a CloudFront distribution that fronts both the React frontend and the API.
 
@@ -50,9 +50,9 @@ Routing `/oauth2/*` through CloudFront keeps Cognito on the same origin as the a
 ```
 PlatformStack (DNS, TLS, shared Cognito User Pool)
     |
-    +-- BudgetDynamoDbStack (4 DynamoDB tables)
+    +-- PersonalFinanceDynamoDbStack (DynamoDB tables)
     |       |
-    +-------+-- BudgetWebStack (Cognito client, Lambda, API Gateway, CloudFront)
+    +-------+-- PersonalFinanceWebStack (Cognito client, Lambda, API Gateway, CloudFront)
 ```
 
 ## Data Model (DynamoDB)

@@ -7,7 +7,7 @@ import * as route53 from "aws-cdk-lib/aws-route53";
 import * as route53Targets from "aws-cdk-lib/aws-route53-targets";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import type { Construct } from "constructs";
-import { AUTH_DOMAIN, BUDGET_DOMAIN, HSA_DOMAIN } from "./constants";
+import { AUTH_DOMAIN, HSA_DOMAIN, PERSONAL_FINANCE_DOMAIN } from "./constants";
 
 /**
  * Shared platform infrastructure for all corderohq.com apps.
@@ -24,8 +24,8 @@ import { AUTH_DOMAIN, BUDGET_DOMAIN, HSA_DOMAIN } from "./constants";
  * - CloudFront Function: directory-index-rewrite (URL rewriting for clean paths)
  * - CloudFront distribution: hsa.corderohq.com → S3 /hsa/ (OAC, HTTPS redirect, /oauth2/* → Cognito proxy)
  * - Route 53 A record: hsa.corderohq.com → CloudFront
- * - Route 53 hosted zone: budget.corderohq.com (delegated from Porkbun)
- * - ACM certificate: budget.corderohq.com + *.budget.corderohq.com (DNS validated)
+ * - Route 53 hosted zone: finance.corderohq.com (delegated from Porkbun)
+ * - ACM certificate: finance.corderohq.com + *.finance.corderohq.com (DNS validated)
  */
 export class PlatformStack extends cdk.Stack {
     userPool!: cognito.UserPool;
@@ -33,8 +33,8 @@ export class PlatformStack extends cdk.Stack {
     distribution!: cloudfront.Distribution;
     hsaZone!: route53.HostedZone;
     hsaCertificate!: acm.Certificate;
-    budgetZone!: route53.HostedZone;
-    budgetCertificate!: acm.Certificate;
+    personalFinanceZone!: route53.HostedZone;
+    personalFinanceCertificate!: acm.Certificate;
 
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
@@ -43,7 +43,7 @@ export class PlatformStack extends cdk.Stack {
 
         const authZone = this.createDnsZones();
         const authCertificate = this.createCertificates(authZone);
-        this.createBudgetDnsAndCerts();
+        this.createPersonalFinanceDnsAndCerts();
         const cognitoDomain = this.createCognito(authCertificate);
         this.createCloudFront();
         this.createDnsRecords(authZone, cognitoDomain);
@@ -110,7 +110,7 @@ export class PlatformStack extends cdk.Stack {
 
     private createCloudFront(): void {
         // S3 bucket for static web assets — shared across all apps
-        // Each app deploys to its own key prefix (e.g., hsa/, budget/)
+        // Each app deploys to its own key prefix (e.g., hsa/, personal-finance/)
         this.assetsBucket = new s3.Bucket(this, "AssetsBucket", {
             bucketName: `corderohq-assets-${this.account}-${this.region}`,
             blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -167,15 +167,15 @@ export class PlatformStack extends cdk.Stack {
         });
     }
 
-    private createBudgetDnsAndCerts(): void {
-        this.budgetZone = new route53.HostedZone(this, "BudgetZone", {
-            zoneName: BUDGET_DOMAIN,
+    private createPersonalFinanceDnsAndCerts(): void {
+        this.personalFinanceZone = new route53.HostedZone(this, "PersonalFinanceZone", {
+            zoneName: PERSONAL_FINANCE_DOMAIN,
         });
 
-        this.budgetCertificate = new acm.Certificate(this, "BudgetCertificate", {
-            domainName: BUDGET_DOMAIN,
-            subjectAlternativeNames: [`*.${BUDGET_DOMAIN}`],
-            validation: acm.CertificateValidation.fromDns(this.budgetZone),
+        this.personalFinanceCertificate = new acm.Certificate(this, "PersonalFinanceCertificate", {
+            domainName: PERSONAL_FINANCE_DOMAIN,
+            subjectAlternativeNames: [`*.${PERSONAL_FINANCE_DOMAIN}`],
+            validation: acm.CertificateValidation.fromDns(this.personalFinanceZone),
         });
     }
 

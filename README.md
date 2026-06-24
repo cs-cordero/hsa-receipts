@@ -12,24 +12,24 @@ Automated HSA receipt processing and archival. Receipts can be submitted via ema
 - **Email pipeline**: Send receipts as attachments to a dedicated SES address for hands-free processing
 - **Live at**: `hsa.corderohq.com`
 
-### Family Budget
+### Personal Finance
 
-A budgeting app for tracking monthly spending against category-level targets. Upload bank/credit card CSV exports, and Claude automatically categorizes each transaction. *(In development)*
+A personal finance app for the family. Today the only feature is a monthly budgeting tool — track monthly spending against category-level targets, upload bank/credit card CSV exports, Claude auto-categorizes each transaction. Future features (e.g. Monte Carlo net worth simulation) will live in this same app.
 
 - **Categories**: Create and manage budget categories with full audit history
 - **Monthly targets**: Set per-category spending targets, carried forward month to month
 - **CSV import**: Upload transaction exports; Claude maps columns and categorizes line items
 - **Summary**: Budget vs. actuals view by month
-- **Live at**: `budget.corderohq.com`
+- **Live at**: `finance.corderohq.com`
 
 ## Project Structure
 
 ```
-infra/       AWS CDK infrastructure (TypeScript)
-lambda/      Lambda functions (Python 3.13)
-web/         HSA Receipt Archiver static web UI (HTML/CSS/JS)
-budget/      Family Budget frontend (React + Vite + TypeScript) [planned]
-docs/        Documentation
+infra/             AWS CDK infrastructure (TypeScript)
+lambda/            Lambda functions (Python 3.13)
+web/               HSA Receipt Archiver static web UI (HTML/CSS/JS)
+personal-finance/  Personal Finance frontend (React + Vite + TypeScript)
+docs/              Documentation
 ```
 
 ## Quick Start
@@ -67,4 +67,4 @@ npx tsc --noEmit
 
 ## Documentation
 
-See `docs/hsa-architecture.md` (HSA receipts app) and `docs/budget-architecture.md` (family budget app) for infrastructure details, and `docs/user_guide.md` for setup, deployment, and day-to-day usage.
+See `docs/hsa-architecture.md` (HSA receipts app) and `docs/personal-finance-architecture.md` (personal finance app) for infrastructure details, and `docs/user_guide.md` for setup, deployment, and day-to-day usage.

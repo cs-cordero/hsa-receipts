@@ -25,7 +25,7 @@ read-only run (CI-style).
 
 Options:
   -p, --python       Only run Python checks (lambda/)
-  -t, --typescript   Only run TypeScript/JS checks (infra/, budget/)
+  -t, --typescript   Only run TypeScript/JS checks (infra/, personal-finance/)
   -s, --synth        Also run \`cdk synth\` (opt-in; slow, skipped by default)
   -n, --no-fix       Don't autofix — just report. pytest, ty, tsc, cdk synth
                      are always read-only and unaffected by this flag.
@@ -103,10 +103,10 @@ main() {
         run "infra: eslint"         npx eslint "${ESLINT_ARGS[@]}" .
         run "infra: prettier"       npx prettier "${PRETTIER_ARGS[@]}" .
 
-        cd "$ROOT/budget"
-        run "budget: tsc"           npx tsc --noEmit
-        run "budget: eslint"        npx eslint "${ESLINT_ARGS[@]}" .
-        run "budget: prettier"      npx prettier "${PRETTIER_ARGS[@]}" .
+        cd "$ROOT/personal-finance"
+        run "personal-finance: tsc"      npx tsc --noEmit
+        run "personal-finance: eslint"   npx eslint "${ESLINT_ARGS[@]}" .
+        run "personal-finance: prettier" npx prettier "${PRETTIER_ARGS[@]}" .
     fi
 
     if $RUN_SYNTH; then

@@ -5,12 +5,12 @@ export const AUTH_DOMAIN = "auth.corderohq.com";
 export const API_DOMAIN = "api.hsa.corderohq.com";
 export const HSA_ORIGIN = `https://${HSA_DOMAIN}`;
 
-export const BUDGET_DOMAIN = "budget.corderohq.com";
+export const PERSONAL_FINANCE_DOMAIN = "finance.corderohq.com";
 
-export function budgetDomain(stage: Stage): string {
-    return stage === "prod" ? BUDGET_DOMAIN : `dev.${BUDGET_DOMAIN}`;
+export function personalFinanceDomain(stage: Stage): string {
+    return stage === "prod" ? PERSONAL_FINANCE_DOMAIN : `dev.${PERSONAL_FINANCE_DOMAIN}`;
 }
 
-export function budgetOrigin(stage: Stage): string {
-    return `https://${budgetDomain(stage)}`;
+export function personalFinanceOrigin(stage: Stage): string {
+    return `https://${personalFinanceDomain(stage)}`;
 }

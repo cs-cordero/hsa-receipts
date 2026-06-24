@@ -2,12 +2,14 @@
 
 ## Project Overview
 
-Read `docs/hsa-architecture.md` (HSA receipts app), `docs/budget-architecture.md` (family budget app), and `docs/user_guide.md` to understand the project structure, AWS architecture, and common workflows.
+Read `docs/hsa-architecture.md` (HSA receipts app), `docs/personal-finance-architecture.md` (personal finance app — today houses the family budget feature, with more features planned), and `docs/user_guide.md` to understand the project structure, AWS architecture, and common workflows.
 
 ## Repository Structure
 
 - `infra/` — AWS CDK infrastructure (TypeScript 5.x, Node.js)
 - `lambda/` — Lambda function code (Python 3.13)
+- `personal-finance/` — React frontend for the personal finance app
+- `web/` — Static frontend for the HSA app
 - `docs/` — Project documentation
 
 ## Coding Standards

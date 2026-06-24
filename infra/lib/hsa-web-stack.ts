@@ -51,7 +51,7 @@ export class HsaWebStack extends cdk.Stack {
 
         // Deploy static web files to the shared assets bucket. `followSymlinks: EXTERNAL`
         // resolves the favicon.svg symlink that points outside web/ (it lives at
-        // ../shared/favicon.svg so the HSA and budget apps can share one source).
+        // ../shared/favicon.svg so the HSA and personal finance apps can share one source).
         new s3deploy.BucketDeployment(this, "WebAssets", {
             sources: [
                 s3deploy.Source.asset("../web", {

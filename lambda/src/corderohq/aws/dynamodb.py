@@ -46,9 +46,7 @@ def _prev_year_month(year_month: str) -> str:
     return f"{year}-{month - 1:02d}"
 
 
-def _walk_back_amount(
-    by_key: dict[tuple[str, str], Any], year_month: str, cat_id: str, max_steps: int = 240
-) -> Any:
+def _walk_back_amount(by_key: dict[tuple[str, str], Any], year_month: str, cat_id: str, max_steps: int = 240) -> Any:
     """Find the most recent stored amount at or before `year_month` for `cat_id`.
 
     Mirrors densify.walk_back_for but lives here to avoid a circular import
@@ -235,7 +233,7 @@ class CategoryTable:
         single-household app, so concurrent writers are vanishingly rare; (b) adding
         a name-keyed GSI or sentinel item to enforce uniqueness would add complexity
         out of proportion to the risk. If a duplicate ever slips through, rename or
-        merge manually. See docs/budget-architecture.md "Category name uniqueness".
+        merge manually. See docs/personal-finance-architecture.md "Category name uniqueness".
         """
         lower_name = name.lower()
         return any(cat["name"].lower() == lower_name and cat["categoryId"] != exclude_id for cat in self.list_all())
@@ -511,7 +509,7 @@ class BudgetTable:
         """Cascade-delete every Budget row referencing the given categoryId. Returns count.
 
         Used by hard-delete only — soft-delete (/deactivate) drops just the future pin
-        rows. See docs/budget-architecture.md "Hard delete semantics".
+        rows. See docs/personal-finance-architecture.md "Hard delete semantics".
         """
         keys: list[dict[str, str]] = []
         params: dict[str, Any] = {
@@ -681,7 +679,7 @@ class TransactionsTable:
         """Cascade-delete every Transactions row referencing the given categoryId. Returns count.
 
         Hard-delete only — there's no soft-delete equivalent for transactions.
-        See docs/budget-architecture.md "Hard delete semantics".
+        See docs/personal-finance-architecture.md "Hard delete semantics".
         """
         keys: list[dict[str, str]] = []
         params: dict[str, Any] = {

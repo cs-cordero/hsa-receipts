@@ -3,12 +3,12 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import type { Construct } from "constructs";
 import type { Stage } from "./constants";
 
-interface BudgetDynamoDbStackProps extends cdk.StackProps {
+interface PersonalFinanceDynamoDbStackProps extends cdk.StackProps {
     readonly stage: Stage;
 }
 
 /**
- * DynamoDB tables for the budget app.
+ * DynamoDB tables for the personal finance app.
  *
  * AWS resources:
  * - DynamoDB table: CategoryGroup-{stage} (PK: groupId)
@@ -17,24 +17,25 @@ interface BudgetDynamoDbStackProps extends cdk.StackProps {
  * - DynamoDB table: BudgetAuditLog-{stage} (PK: entityType [always "AUDIT"], SK: sortId [ULID])
  * - DynamoDB table: Transactions-{stage} (PK: yearMonth, SK: sortId)
  */
-export class BudgetDynamoDbStack extends cdk.Stack {
+export class PersonalFinanceDynamoDbStack extends cdk.Stack {
     readonly categoryGroupTable: dynamodb.Table;
     readonly categoryTable: dynamodb.Table;
     readonly budgetTable: dynamodb.Table;
     readonly budgetAuditLogTable: dynamodb.Table;
     readonly transactionsTable: dynamodb.Table;
 
-    constructor(scope: Construct, id: string, props: BudgetDynamoDbStackProps) {
+    constructor(scope: Construct, id: string, props: PersonalFinanceDynamoDbStackProps) {
         super(scope, id, props);
 
         const { stage } = props;
-        // Flipped prod to DESTROY for the CP3 audit-log schema replacement (PK change forces
-        // table replacement, which requires CFN to be able to delete the old table). No data
-        // of value in either stage yet. Revisit once prod actually holds audit entries worth
-        // preserving — at that point a one-shot migration script + RETAIN is the right move.
-        const removalPolicy = cdk.RemovalPolicy.DESTROY;
+        // Prod tables are retained on stack delete so an accidental `cdk destroy` (or
+        // termination-protection lift) doesn't wipe live data. Dev tables destroy so we
+        // can iterate freely. Schema-breaking changes that need table replacement (like
+        // the CP3 audit-log PK change) must be handled with a one-shot migration script
+        // when they touch prod.
+        const removalPolicy = stage === "prod" ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY;
 
-        cdk.Tags.of(this).add("project", "budget");
+        cdk.Tags.of(this).add("project", "personal-finance");
         cdk.Tags.of(this).add("stage", stage);
 
         this.categoryGroupTable = new dynamodb.Table(this, "CategoryGroupTable", {

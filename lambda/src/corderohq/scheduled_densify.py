@@ -3,7 +3,7 @@
 Invoked by an EventBridge Scheduler at midnight ET on the 1st of every month.
 Runs the same `densify` routine that the API handlers use for lazy hydration,
 so the cron and the on-demand path share one source of truth. See
-docs/budget-architecture.md "Densification" for the eager + lazy split.
+docs/personal-finance-architecture.md "Densification" for the eager + lazy split.
 """
 
 from __future__ import annotations

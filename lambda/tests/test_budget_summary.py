@@ -27,7 +27,7 @@ def _make_tables() -> tuple[
     return bt, tt, ct, budget_mock, txn_mock, cat_mock
 
 
-# Stable "now" lined up with test_budget_handler so 2026-06 is current.
+# Stable "now" lined up with test_personal_finance_handler so 2026-06 is current.
 _NOW = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
 
 

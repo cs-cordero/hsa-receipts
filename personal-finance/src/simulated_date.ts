@@ -11,7 +11,7 @@
 
 import { IS_DEV } from "./dev";
 
-const KEY = "budget.simulatedDate";
+const KEY = "personalFinance.simulatedDate";
 
 export function getSimulatedDate(): string | null {
     if (!IS_DEV) return null;

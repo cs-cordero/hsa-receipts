@@ -15,7 +15,7 @@ export default function Layout() {
             {adminModeOn && <AdminBanner onTurnOff={() => setAdminModeOn(false)} />}
             <header>
                 <nav>
-                    <span className="logo">Family Budget</span>
+                    <span className="logo">Personal Finance</span>
                     <NavLink to="/">Summary</NavLink>
                     <NavLink to="/budget">Budget</NavLink>
                     <NavLink to="/transactions">Transactions</NavLink>

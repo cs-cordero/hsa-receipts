@@ -8,7 +8,7 @@ cdk.out/
 !eslint.config.mjs
 !prettier.config.mjs
 !web/**/*.js
-!budget/eslint.config.js
+!personal-finance/eslint.config.js
 
 # Python
 __pycache__/

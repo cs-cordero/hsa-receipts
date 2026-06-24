@@ -1,17 +1,17 @@
 import * as cdk from "aws-cdk-lib";
 import { Template } from "aws-cdk-lib/assertions";
-import { BudgetDynamoDbStack } from "../lib/budget-dynamodb-stack";
+import { PersonalFinanceDynamoDbStack } from "../lib/personal-finance-dynamodb-stack";
 
 function createTestTemplate(stage: "dev" | "prod"): Template {
     const app = new cdk.App();
-    const stack = new BudgetDynamoDbStack(app, "TestBudgetDynamoDbStack", {
+    const stack = new PersonalFinanceDynamoDbStack(app, "TestPersonalFinanceDynamoDbStack", {
         env: { account: "123456789012", region: "us-east-1" },
         stage,
     });
     return Template.fromStack(stack);
 }
 
-describe("BudgetDynamoDbStack", () => {
+describe("PersonalFinanceDynamoDbStack", () => {
     describe("prod stage", () => {
         let template: Template;
 

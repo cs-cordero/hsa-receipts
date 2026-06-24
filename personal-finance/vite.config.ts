@@ -16,7 +16,7 @@ export default defineConfig({
     plugins: [
         react(),
         {
-            // Serves budget/config.dev.json at /config.json during `npm run dev`. The file
+            // Serves personal-finance/config.dev.json at /config.json during `npm run dev`. The file
             // lives outside public/ so `vite build` never copies it into dist/, which means
             // dev values can't accidentally ship to S3. In prod, CDK's BucketDeployment
             // writes the real config.json via Source.jsonData.
@@ -31,7 +31,7 @@ export default defineConfig({
                     } catch {
                         res.statusCode = 404;
                         res.setHeader("Content-Type", "text/plain");
-                        res.end("config.dev.json not found in budget/");
+                        res.end("config.dev.json not found in personal-finance/");
                     }
                 });
             },
