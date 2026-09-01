@@ -16,6 +16,9 @@ interface PersonalFinanceDynamoDbStackProps extends cdk.StackProps {
  * - DynamoDB table: Budget-{stage} (PK: yearMonth, SK: categoryId)
  * - DynamoDB table: BudgetAuditLog-{stage} (PK: entityType [always "AUDIT"], SK: sortId [ULID])
  * - DynamoDB table: Transactions-{stage} (PK: yearMonth, SK: sortId)
+ * - DynamoDB table: Profile-{stage} (PK: householdId [always "HOUSEHOLD"], SK: personId [ULID])
+ * - DynamoDB table: Account-{stage} (PK: accountId [ULID])
+ * - DynamoDB table: NetWorthSnapshot-{stage} (PK: yearMonth, SK: accountId)
  */
 export class PersonalFinanceDynamoDbStack extends cdk.Stack {
     readonly categoryGroupTable: dynamodb.Table;
@@ -23,6 +26,9 @@ export class PersonalFinanceDynamoDbStack extends cdk.Stack {
     readonly budgetTable: dynamodb.Table;
     readonly budgetAuditLogTable: dynamodb.Table;
     readonly transactionsTable: dynamodb.Table;
+    readonly profileTable: dynamodb.Table;
+    readonly accountTable: dynamodb.Table;
+    readonly netWorthSnapshotTable: dynamodb.Table;
 
     constructor(scope: Construct, id: string, props: PersonalFinanceDynamoDbStackProps) {
         super(scope, id, props);
@@ -78,6 +84,35 @@ export class PersonalFinanceDynamoDbStack extends cdk.Stack {
             tableName: `Transactions-${stage}`,
             partitionKey: { name: "yearMonth", type: dynamodb.AttributeType.STRING },
             sortKey: { name: "sortId", type: dynamodb.AttributeType.STRING },
+            billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+            pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+            removalPolicy,
+        });
+
+        // Net worth tracking (design: net-worth-tracking-design.md §4).
+        this.profileTable = new dynamodb.Table(this, "ProfileTable", {
+            tableName: `Profile-${stage}`,
+            // Item-collection: PK is always "HOUSEHOLD", one item per person (ULID SK).
+            // A single Query returns the whole household.
+            partitionKey: { name: "householdId", type: dynamodb.AttributeType.STRING },
+            sortKey: { name: "personId", type: dynamodb.AttributeType.STRING },
+            billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+            pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+            removalPolicy,
+        });
+
+        this.accountTable = new dynamodb.Table(this, "AccountTable", {
+            tableName: `Account-${stage}`,
+            partitionKey: { name: "accountId", type: dynamodb.AttributeType.STRING },
+            billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+            pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+            removalPolicy,
+        });
+
+        this.netWorthSnapshotTable = new dynamodb.Table(this, "NetWorthSnapshotTable", {
+            tableName: `NetWorthSnapshot-${stage}`,
+            partitionKey: { name: "yearMonth", type: dynamodb.AttributeType.STRING },
+            sortKey: { name: "accountId", type: dynamodb.AttributeType.STRING },
             billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
             pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
             removalPolicy,

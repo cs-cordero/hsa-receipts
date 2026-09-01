@@ -5,16 +5,18 @@ import csv
 import io
 import json
 import logging
-import re
 from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from corderohq.aws.dynamodb import (
+    AccountTable,
     AuditLogTable,
     BudgetTable,
     CategoryGroupTable,
     CategoryTable,
+    NetWorthSnapshotTable,
+    ProfileTable,
     TransactionsTable,
     compute_summary,
 )
@@ -22,7 +24,8 @@ from corderohq.budget.auth import is_budget_admin
 from corderohq.budget.csv_import import categorize_transactions, map_columns
 from corderohq.budget.densify import densify, resolve_future_targets, walk_back_for
 from corderohq.budget.editability import editability
-from corderohq.util import get_env_var
+from corderohq.networth.snapshots import build_history, build_month_view, compute_prefill
+from corderohq.util import YEAR_MONTH_PATTERN, get_env_var
 
 LOGGER = logging.getLogger(__name__)
 
@@ -31,6 +34,9 @@ _CATEGORY_TABLE = CategoryTable(get_env_var("CATEGORY_TABLE_NAME"))
 _BUDGET_TABLE = BudgetTable(get_env_var("BUDGET_TABLE_NAME"))
 _TRANSACTIONS_TABLE = TransactionsTable(get_env_var("TRANSACTIONS_TABLE_NAME"))
 _AUDIT_LOG_TABLE = AuditLogTable(get_env_var("BUDGET_AUDIT_LOG_TABLE_NAME"))
+_PROFILE_TABLE = ProfileTable(get_env_var("PROFILE_TABLE_NAME"))
+_ACCOUNT_TABLE = AccountTable(get_env_var("ACCOUNT_TABLE_NAME"))
+_NETWORTH_SNAPSHOT_TABLE = NetWorthSnapshotTable(get_env_var("NETWORTH_SNAPSHOT_TABLE_NAME"))
 _STAGE = get_env_var("STAGE")
 
 _SECURITY_HEADERS = {
@@ -39,8 +45,6 @@ _SECURITY_HEADERS = {
     "X-Frame-Options": "DENY",
     "Cache-Control": "no-store",
 }
-
-_YEAR_MONTH_PATTERN = re.compile(r"^\d{4}-\d{2}$")
 
 
 def _now_utc() -> datetime:
@@ -208,6 +212,46 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         # Audit log
         elif path == "/api/audit-log" and method == "GET":
             return _get_audit_log(event)
+
+        # Household profile (net worth)
+        elif path == "/api/profile" and method == "GET":
+            return _get_profile()
+        elif path == "/api/profile/people" and method == "POST":
+            return _post_person(event)
+        elif path.startswith("/api/profile/people/") and path.endswith("/delete") and method == "POST":
+            person_id = path.split("/")[-2]
+            return _delete_person(person_id)
+        elif path.startswith("/api/profile/people/") and method == "PUT":
+            person_id = path.split("/")[-1]
+            return _put_person(event, person_id)
+
+        # Accounts (net worth)
+        elif path == "/api/accounts" and method == "GET":
+            return _get_accounts(event)
+        elif path == "/api/accounts" and method == "POST":
+            return _post_account(event)
+        elif path == "/api/accounts/reorder" and method == "POST":
+            return _post_accounts_reorder(event)
+        elif path.startswith("/api/accounts/") and path.endswith("/deactivate") and method == "POST":
+            account_id = path.split("/")[-2]
+            return _deactivate_account(account_id)
+        elif path.startswith("/api/accounts/") and path.endswith("/reactivate") and method == "POST":
+            account_id = path.split("/")[-2]
+            return _reactivate_account(account_id)
+        elif path.startswith("/api/accounts/") and method == "PUT":
+            account_id = path.split("/")[-1]
+            return _put_account(event, account_id)
+
+        # Net worth snapshots. The literal /history path is checked before the
+        # /{YYYY-MM} pattern so "history" isn't parsed as a year-month.
+        elif path == "/api/net-worth/history" and method == "GET":
+            return _get_networth_history()
+        elif path.startswith("/api/net-worth/") and method == "GET":
+            year_month = path.split("/")[-1]
+            return _get_networth_month(year_month, now)
+        elif path.startswith("/api/net-worth/") and method == "POST":
+            year_month = path.split("/")[-1]
+            return _post_networth_month(event, year_month, now)
 
         else:
             return _response(404, "Not found")
@@ -606,7 +650,7 @@ def _post_categories_reorder(event: dict[str, Any]) -> dict[str, Any]:
 
 
 def _get_budget(year_month: str, now: datetime) -> dict[str, Any]:
-    if not _YEAR_MONTH_PATTERN.match(year_month):
+    if not YEAR_MONTH_PATTERN.match(year_month):
         return _response(400, "Invalid month format, expected YYYY-MM")
 
     _ensure_hydrated(now)
@@ -635,7 +679,7 @@ def _post_budget_replace(event: dict[str, Any], year_month: str, user: dict[str,
       produces DELETE entries; row deletions happen via /pin (null), deactivation drop, or
       hard delete.
     """
-    if not _YEAR_MONTH_PATTERN.match(year_month):
+    if not YEAR_MONTH_PATTERN.match(year_month):
         return _response(400, "Invalid month format, expected YYYY-MM")
 
     body = _parse_json_body(event)
@@ -740,7 +784,7 @@ def _post_budget_pin(event: dict[str, Any], year_month: str, user: dict[str, str
     Returns `{targets: <walk-back-resolved rows for year_month>, warnings:
     {downstreamPins, pinMatchesCarriedValue}}`.
     """
-    if not _YEAR_MONTH_PATTERN.match(year_month):
+    if not YEAR_MONTH_PATTERN.match(year_month):
         return _response(400, "Invalid month format, expected YYYY-MM")
 
     body = _parse_json_body(event)
@@ -861,7 +905,7 @@ def _post_budget_pin(event: dict[str, Any], year_month: str, user: dict[str, str
 
 def _get_transactions(event: dict[str, Any]) -> dict[str, Any]:
     month = (event.get("queryStringParameters") or {}).get("month", "")
-    if not month or not _YEAR_MONTH_PATTERN.match(month):
+    if not month or not YEAR_MONTH_PATTERN.match(month):
         return _response(400, "query parameter 'month' is required (YYYY-MM)")
 
     txns = _TRANSACTIONS_TABLE.list_for_month(month)
@@ -922,7 +966,7 @@ def _validate_commit_rows(
             issues.append("missing_category")
         txn_date = row.get("transactionDate") or ""
         ym = txn_date[:7] if len(txn_date) >= 7 else ""
-        if ym and _YEAR_MONTH_PATTERN.match(ym):
+        if ym and YEAR_MONTH_PATTERN.match(ym):
             state = editability(ym, now)
             if state == "LOCKED" and not override_active:
                 issues.append("locked_month")
@@ -1160,7 +1204,7 @@ def _delete_transaction(event: dict[str, Any], now: datetime) -> dict[str, Any]:
 
 def _get_summary(event: dict[str, Any], now: datetime) -> dict[str, Any]:
     month = (event.get("queryStringParameters") or {}).get("month", "")
-    if not month or not _YEAR_MONTH_PATTERN.match(month):
+    if not month or not YEAR_MONTH_PATTERN.match(month):
         return _response(400, "query parameter 'month' is required (YYYY-MM)")
 
     _ensure_hydrated(now)
@@ -1181,6 +1225,287 @@ def _get_audit_log(event: dict[str, Any]) -> dict[str, Any]:
 
     entries = _AUDIT_LOG_TABLE.read_recent_entries(limit)
     return _json_response(200, json.dumps(entries, default=_json_default))
+
+
+# --- Household profile (net worth) ---
+
+
+def _get_profile() -> dict[str, Any]:
+    return _json_response(200, json.dumps(_PROFILE_TABLE.list_people(), default=_json_default))
+
+
+def _post_person(event: dict[str, Any]) -> dict[str, Any]:
+    body = _parse_json_body(event)
+    if body is None:
+        return _response(400, "Request body is required")
+
+    name = body.get("name", "")
+    if not name:
+        return _response(400, "name is required")
+    birth_year_month = body.get("birthYearMonth", "")
+    if not birth_year_month:
+        return _response(400, "birthYearMonth is required")
+
+    try:
+        item = _PROFILE_TABLE.create_person(name, birth_year_month)
+    except ValueError as e:
+        return _response(400, str(e))
+    return _json_response(201, json.dumps(item, default=_json_default))
+
+
+def _put_person(event: dict[str, Any], person_id: str) -> dict[str, Any]:
+    body = _parse_json_body(event)
+    if body is None:
+        return _response(400, "Request body is required")
+
+    name = body.get("name")
+    birth_year_month = body.get("birthYearMonth")
+    if name is None and birth_year_month is None:
+        return _response(400, "name and/or birthYearMonth is required")
+
+    try:
+        item = _PROFILE_TABLE.update_person(person_id, name=name, birth_year_month=birth_year_month)
+    except ValueError as e:
+        return _response(400, str(e))
+    if item is None:
+        return _response(404, "Person not found")
+    return _json_response(200, json.dumps(item, default=_json_default))
+
+
+def _delete_person(person_id: str) -> dict[str, Any]:
+    """Hard-delete a person, blocked if any account still names them as owner.
+
+    People are rarely removed — this endpoint exists to undo a fat-fingered create,
+    so a 409 listing the referencing accounts (rather than cascading) keeps owner
+    references from silently dangling.
+    """
+    if _PROFILE_TABLE.get_person(person_id) is None:
+        return _response(404, "Person not found")
+
+    blocking = _ACCOUNT_TABLE.accounts_with_owner(person_id)
+    if blocking:
+        return _json_response(
+            409,
+            json.dumps(
+                {
+                    "error": "Person is the owner of one or more accounts; reassign them first",
+                    "personId": person_id,
+                    "blockingAccounts": blocking,
+                }
+            ),
+        )
+
+    _PROFILE_TABLE.delete_person(person_id)
+    return _json_response(200, json.dumps({"personId": person_id}))
+
+
+# --- Accounts (net worth) ---
+
+
+def _validate_owners(owners: Any) -> tuple[list[str] | None, dict[str, Any] | None]:
+    """Validate an account's `owners` list, returning (normalized_owners, error).
+
+    An account is owned by one or more household people. Valid input is a non-empty
+    list of personId strings that each exist in the household. On success returns
+    (deduped list, None); on failure (None, 400 response). The foreign-key existence
+    check is the part the table wrapper deliberately leaves to the handler (it needs
+    a Profile lookup).
+    """
+    if not isinstance(owners, list) or not owners:
+        return None, _response(400, "owners must be a non-empty list of personIds")
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for owner in owners:
+        if not isinstance(owner, str) or not owner:
+            return None, _response(400, "each owner must be a personId string")
+        if _PROFILE_TABLE.get_person(owner) is None:
+            return None, _response(400, f"owner '{owner}' is not a person in the household")
+        if owner not in seen:
+            seen.add(owner)
+            normalized.append(owner)
+    return normalized, None
+
+
+def _get_accounts(event: dict[str, Any]) -> dict[str, Any]:
+    include_inactive = (event.get("queryStringParameters") or {}).get("include_inactive", "")
+    accounts = _ACCOUNT_TABLE.list_all() if include_inactive.lower() == "true" else _ACCOUNT_TABLE.list_active()
+    return _json_response(200, json.dumps(accounts, default=_json_default))
+
+
+def _post_account(event: dict[str, Any]) -> dict[str, Any]:
+    body = _parse_json_body(event)
+    if body is None:
+        return _response(400, "Request body is required")
+
+    # `liability` and (for fixed-class types) `assetClass` are derived from the type
+    # server-side, so they are not required inputs — only name, type, and owners are.
+    for field in ("name", "accountType"):
+        if not body.get(field):
+            return _response(400, f"{field} is required")
+
+    owners, err = _validate_owners(body.get("owners"))
+    if err:
+        return err
+
+    try:
+        item = _ACCOUNT_TABLE.create(
+            name=body["name"],
+            account_type=body["accountType"],
+            asset_class=body.get("assetClass"),
+            owners=owners,
+            excluded_from_net_worth=bool(body.get("excludedFromNetWorth", False)),
+            loan_terms=body.get("loanTerms"),
+            notes=body.get("notes"),
+        )
+    except ValueError as e:
+        return _response(400, str(e))
+    return _json_response(201, json.dumps(item, default=_json_default))
+
+
+def _put_account(event: dict[str, Any], account_id: str) -> dict[str, Any]:
+    """Edit an account's mutable fields.
+
+    Body may carry any of name/assetClass/owners/excludedFromNetWorth/loanTerms/
+    notes/sortOrder. A field present with value null removes the optional attribute
+    (loanTerms/notes). `owners`, when present, is a non-empty list that replaces the
+    current owners. `accountType` and `liability` are immutable (the type drives
+    liability, the asset-class rules, and loan-term eligibility) and are ignored here.
+    """
+    body = _parse_json_body(event)
+    if body is None:
+        return _response(400, "Request body is required")
+
+    editable_fields = ("name", "assetClass", "owners", "excludedFromNetWorth", "loanTerms", "notes", "sortOrder")
+    updates = {field: body[field] for field in editable_fields if field in body}
+    if not updates:
+        return _response(400, f"at least one editable field is required: {list(editable_fields)}")
+
+    if "owners" in updates:
+        owners, err = _validate_owners(updates["owners"])
+        if err:
+            return err
+        updates["owners"] = owners
+
+    try:
+        item = _ACCOUNT_TABLE.update(account_id, updates)
+    except ValueError as e:
+        return _response(400, str(e))
+    if item is None:
+        return _response(404, "Account not found")
+    return _json_response(200, json.dumps(item, default=_json_default))
+
+
+def _deactivate_account(account_id: str) -> dict[str, Any]:
+    item = _ACCOUNT_TABLE.deactivate(account_id)
+    if item is None:
+        return _response(404, "Account not found")
+    return _json_response(200, json.dumps(item, default=_json_default))
+
+
+def _reactivate_account(account_id: str) -> dict[str, Any]:
+    item = _ACCOUNT_TABLE.reactivate(account_id)
+    if item is None:
+        return _response(404, "Account not found")
+    return _json_response(200, json.dumps(item, default=_json_default))
+
+
+def _post_accounts_reorder(event: dict[str, Any]) -> dict[str, Any]:
+    body = _parse_json_body(event)
+    if body is None:
+        return _response(400, "Request body is required")
+    order = body.get("order")
+    if not isinstance(order, list) or not all(isinstance(a, str) for a in order):
+        return _response(400, "'order' must be a list of accountId strings")
+    _ACCOUNT_TABLE.reorder(order)
+    return _json_response(200, json.dumps(_ACCOUNT_TABLE.list_all(), default=_json_default))
+
+
+# --- Net worth snapshots ---
+
+
+def _reject_future_or_malformed_month(year_month: str, now: datetime) -> dict[str, Any] | None:
+    """Return a 400 response if `year_month` is malformed or in the future, else None.
+
+    Recording a future balance is meaningless (that's the simulator's job someday),
+    so the effective-now check reuses the same clock as the budget feature, keeping
+    the dev X-Simulated-Date header working.
+    """
+    if not YEAR_MONTH_PATTERN.match(year_month):
+        return _response(400, "Invalid month format, expected YYYY-MM")
+    if year_month > _year_month_of(now):
+        return _response(400, "Cannot record a net-worth snapshot for a future month")
+    return None
+
+
+def _get_networth_month(year_month: str, now: datetime) -> dict[str, Any]:
+    """Return a month's snapshot rows with per-account prefill from the last prior value."""
+    err = _reject_future_or_malformed_month(year_month, now)
+    if err:
+        return err
+
+    accounts = _ACCOUNT_TABLE.list_all()
+    month_rows = _NETWORTH_SNAPSHOT_TABLE.get_month(year_month)
+    prefill = compute_prefill(_NETWORTH_SNAPSHOT_TABLE.scan_all(), year_month)
+    rows = build_month_view(accounts, month_rows, prefill)
+    return _json_response(200, json.dumps({"yearMonth": year_month, "rows": rows}, default=_json_default))
+
+
+def _post_networth_month(event: dict[str, Any], year_month: str, now: datetime) -> dict[str, Any]:
+    """Upsert a month's snapshot rows.
+
+    Body: {rows: [{accountId, value: number | null, note?: string | null}]}. A
+    non-negative integer (millionths of a dollar) writes the row; null deletes it.
+    An optional per-row `note` string is stored with the value (month-specific;
+    never carried forward). Accounts omitted from `rows` are left untouched.
+    Unknown accountIds are rejected so orphan rows can't be created.
+    """
+    err = _reject_future_or_malformed_month(year_month, now)
+    if err:
+        return err
+
+    body = _parse_json_body(event)
+    if body is None:
+        return _response(400, "Request body is required")
+    rows = body.get("rows")
+    if not isinstance(rows, list):
+        return _response(400, "rows array is required")
+
+    known_account_ids = {a["accountId"] for a in _ACCOUNT_TABLE.list_all()}
+    unknown: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict) or "accountId" not in row or "value" not in row:
+            return _response(400, "each row must have accountId and value (value may be null)")
+        account_id = row["accountId"]
+        if account_id not in known_account_ids:
+            unknown.append(account_id)
+            continue
+        note = row.get("note")
+        if note is not None and not isinstance(note, str):
+            return _response(400, f"note for account {account_id} must be a string or null")
+        if isinstance(note, str) and len(note) > 1000:
+            return _response(400, f"note for account {account_id} must be 1000 characters or fewer")
+        value = row["value"]
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int):
+            return _response(400, f"value for account {account_id} must be an integer or null")
+        if value < 0:
+            return _response(400, f"value for account {account_id} must be >= 0")
+    if unknown:
+        return _json_response(
+            400,
+            json.dumps({"error": "unknown accountId(s) in rows", "unknownAccountIds": sorted(set(unknown))}),
+        )
+
+    saved = _NETWORTH_SNAPSHOT_TABLE.upsert_month(year_month, rows)
+    return _json_response(200, json.dumps({"yearMonth": year_month, "rows": saved}, default=_json_default))
+
+
+def _get_networth_history() -> dict[str, Any]:
+    """Return the full Excel-style history: accounts, months, values, monthly totals."""
+    accounts = _ACCOUNT_TABLE.list_all()
+    all_rows = _NETWORTH_SNAPSHOT_TABLE.scan_all()
+    return _json_response(200, json.dumps(build_history(accounts, all_rows), default=_json_default))
 
 
 # --- Helpers ---
@@ -1262,7 +1587,7 @@ def _check_year_months_editable(
     offending: list[dict[str, Any]] = []
     for index, item in enumerate(items):
         ym = item.get(year_month_key)
-        if not isinstance(ym, str) or not _YEAR_MONTH_PATTERN.match(ym):
+        if not isinstance(ym, str) or not YEAR_MONTH_PATTERN.match(ym):
             continue
         if editability(ym, now) == "LOCKED":
             offending.append({"index": index, "yearMonth": ym})

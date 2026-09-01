@@ -5,6 +5,7 @@
  */
 
 import type {
+    Account,
     AuditEntry,
     AuditUser,
     BudgetTarget,
@@ -16,7 +17,14 @@ import type {
     DeactivateResult,
     DeletionPreview,
     HardDeleteResult,
+    LoanTerms,
+    NetWorthHistory,
+    NetWorthMonth,
+    NetWorthPrefill,
+    NetWorthRow,
+    NetWorthTotals,
     ParsedTransaction,
+    Person,
     PinResult,
     RowValidation,
     RowValidationIssue,
@@ -29,6 +37,7 @@ import {
     arrayOf,
     isObject,
     optionalBoolean,
+    optionalString,
     requireBoolean,
     requireNumber,
     requireObject,
@@ -357,4 +366,157 @@ export function parseDeletedGroup(raw: unknown): { groupId: string } {
     return {
         groupId: requireString(obj, "groupId", "{groupId}"),
     };
+}
+
+// --- Net worth tracking ---
+
+export function parsePerson(raw: unknown): Person {
+    const obj = requireObject(raw, "Person");
+    return {
+        personId: requireString(obj, "personId", "Person"),
+        name: requireString(obj, "name", "Person"),
+        birthYearMonth: requireString(obj, "birthYearMonth", "Person"),
+        createdAt: requireString(obj, "createdAt", "Person"),
+        updatedAt: requireString(obj, "updatedAt", "Person"),
+    };
+}
+
+export function parsePersonArray(raw: unknown): Person[] {
+    return arrayOf(raw, parsePerson, "Person[]");
+}
+
+export function parseDeletedPerson(raw: unknown): { personId: string } {
+    const obj = requireObject(raw, "{personId}");
+    return {
+        personId: requireString(obj, "personId", "{personId}"),
+    };
+}
+
+function parseLoanTerms(raw: unknown): LoanTerms {
+    const obj = requireObject(raw, "LoanTerms");
+    return {
+        interestRate: requireNumber(obj, "interestRate", "LoanTerms"),
+        monthlyPayment: requireNumber(obj, "monthlyPayment", "LoanTerms"),
+        payoffYearMonth: requireString(obj, "payoffYearMonth", "LoanTerms"),
+    };
+}
+
+export function parseAccount(raw: unknown): Account {
+    const obj = requireObject(raw, "Account");
+    const account: Account = {
+        accountId: requireString(obj, "accountId", "Account"),
+        name: requireString(obj, "name", "Account"),
+        accountType: requireString(obj, "accountType", "Account"),
+        assetClass: requireString(obj, "assetClass", "Account"),
+        liability: requireBoolean(obj, "liability", "Account"),
+        active: requireBoolean(obj, "active", "Account"),
+        sortOrder: requireNumber(obj, "sortOrder", "Account"),
+        createdAt: requireString(obj, "createdAt", "Account"),
+        updatedAt: requireString(obj, "updatedAt", "Account"),
+        // Every account has one or more owners. Tolerate absence (default []) only
+        // to survive any hypothetical legacy row; new writes always include it.
+        owners: obj.owners === undefined ? [] : stringArray(obj.owners, "Account.owners"),
+        // Pre-feature rows lack this flag; default to included (false).
+        excludedFromNetWorth: obj.excludedFromNetWorth === true,
+    };
+    // Optional attributes are omitted server-side when absent (a row only carries
+    // what was actually asserted), so tolerate their absence here.
+    const notes = optionalString(obj, "notes", "Account");
+    if (notes !== undefined) account.notes = notes;
+    if (obj.loanTerms !== undefined) account.loanTerms = parseLoanTerms(obj.loanTerms);
+    return account;
+}
+
+export function parseAccountArray(raw: unknown): Account[] {
+    return arrayOf(raw, parseAccount, "Account[]");
+}
+
+function parseNetWorthPrefill(raw: unknown): NetWorthPrefill | null {
+    if (raw === null || raw === undefined) return null;
+    const obj = requireObject(raw, "NetWorthPrefill");
+    return {
+        value: requireNumber(obj, "value", "NetWorthPrefill"),
+        fromYearMonth: requireString(obj, "fromYearMonth", "NetWorthPrefill"),
+    };
+}
+
+function parseNetWorthRow(raw: unknown): NetWorthRow {
+    const obj = requireObject(raw, "NetWorthRow");
+    const rawValue = obj.value;
+    let value: number | null;
+    if (rawValue === null || rawValue === undefined) {
+        value = null;
+    } else if (typeof rawValue === "number") {
+        value = rawValue;
+    } else {
+        throw new Error(`NetWorthRow.value must be a number or null, got ${typeof rawValue}`);
+    }
+    return {
+        accountId: requireString(obj, "accountId", "NetWorthRow"),
+        value,
+        prefill: parseNetWorthPrefill(obj.prefill),
+        note: typeof obj.note === "string" ? obj.note : null,
+    };
+}
+
+export function parseNetWorthMonth(raw: unknown): NetWorthMonth {
+    const obj = requireObject(raw, "NetWorthMonth");
+    return {
+        yearMonth: requireString(obj, "yearMonth", "NetWorthMonth"),
+        rows: arrayOf(obj.rows, parseNetWorthRow, "NetWorthMonth.rows"),
+    };
+}
+
+function parseNetWorthTotals(raw: unknown, label: string): NetWorthTotals {
+    const obj = requireObject(raw, label);
+    return {
+        assets: requireNumber(obj, "assets", label),
+        liabilities: requireNumber(obj, "liabilities", label),
+        netWorth: requireNumber(obj, "netWorth", label),
+    };
+}
+
+export function parseNetWorthHistory(raw: unknown): NetWorthHistory {
+    const obj = requireObject(raw, "NetWorthHistory");
+    const accounts = arrayOf(obj.accounts, parseAccount, "NetWorthHistory.accounts");
+    const months = stringArray(obj.months, "NetWorthHistory.months");
+
+    const valuesObj = requireObject(obj.values, "NetWorthHistory.values");
+    const values: Record<string, Record<string, number>> = {};
+    for (const ym of Object.keys(valuesObj)) {
+        const inner = requireObject(valuesObj[ym], `NetWorthHistory.values.${ym}`);
+        const row: Record<string, number> = {};
+        for (const accountId of Object.keys(inner)) {
+            const v = inner[accountId];
+            if (typeof v !== "number") {
+                throw new Error(`NetWorthHistory.values.${ym}.${accountId} must be a number`);
+            }
+            row[accountId] = v;
+        }
+        values[ym] = row;
+    }
+
+    // `notes` may be absent on responses from an older backend — default to {}.
+    const notesObj = obj.notes === undefined ? {} : requireObject(obj.notes, "NetWorthHistory.notes");
+    const notes: Record<string, Record<string, string>> = {};
+    for (const ym of Object.keys(notesObj)) {
+        const inner = requireObject(notesObj[ym], `NetWorthHistory.notes.${ym}`);
+        const row: Record<string, string> = {};
+        for (const accountId of Object.keys(inner)) {
+            const v = inner[accountId];
+            if (typeof v !== "string") {
+                throw new Error(`NetWorthHistory.notes.${ym}.${accountId} must be a string`);
+            }
+            row[accountId] = v;
+        }
+        notes[ym] = row;
+    }
+
+    const totalsObj = requireObject(obj.totals, "NetWorthHistory.totals");
+    const totals: Record<string, NetWorthTotals> = {};
+    for (const ym of Object.keys(totalsObj)) {
+        totals[ym] = parseNetWorthTotals(totalsObj[ym], `NetWorthHistory.totals.${ym}`);
+    }
+
+    return { accounts, months, values, notes, totals };
 }

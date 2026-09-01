@@ -1,6 +1,8 @@
 import { getAccessToken } from "./auth";
 import { getSimulatedDate } from "./simulated_date";
 import {
+    parseAccount,
+    parseAccountArray,
     parseAuditEntryArray,
     parseBudgetTargetArray,
     parseCategory,
@@ -11,15 +13,20 @@ import {
     parseDeactivateResult,
     parseDeletedCount,
     parseDeletedGroup,
+    parseDeletedPerson,
     parseDeletionPreview,
     parseHardDeleteResult,
+    parseNetWorthHistory,
+    parseNetWorthMonth,
+    parsePerson,
+    parsePersonArray,
     parsePinResult,
     parseSummary,
     parseTransaction,
     parseTransactionArray,
     parseUploadResult,
 } from "./parsers";
-import type { Transaction } from "./types";
+import type { AccountCreate, AccountUpdate, Transaction } from "./types";
 
 const API_BASE = "/api";
 
@@ -178,6 +185,37 @@ export const commitTransactions = (
         method: "POST",
         ...jsonBody({ rows, ...(override ? { override: true } : {}) }),
     });
+
+// Household profile (people)
+export const fetchProfile = () => request("/profile", parsePersonArray);
+export const createPerson = (name: string, birthYearMonth: string) =>
+    request("/profile/people", parsePerson, { method: "POST", ...jsonBody({ name, birthYearMonth }) });
+export const updatePerson = (id: string, updates: { name?: string; birthYearMonth?: string }) =>
+    request(`/profile/people/${id}`, parsePerson, { method: "PUT", ...jsonBody(updates) });
+export const deletePerson = (id: string) =>
+    request(`/profile/people/${id}/delete`, parseDeletedPerson, { method: "POST" });
+
+// Accounts
+export const fetchAccounts = () => request("/accounts", parseAccountArray);
+export const fetchAllAccounts = () => request("/accounts?include_inactive=true", parseAccountArray);
+export const createAccount = (data: AccountCreate) =>
+    request("/accounts", parseAccount, { method: "POST", ...jsonBody(data) });
+export const updateAccount = (id: string, updates: AccountUpdate) =>
+    request(`/accounts/${id}`, parseAccount, { method: "PUT", ...jsonBody(updates) });
+export const deactivateAccount = (id: string) =>
+    request(`/accounts/${id}/deactivate`, parseAccount, { method: "POST" });
+export const reactivateAccount = (id: string) =>
+    request(`/accounts/${id}/reactivate`, parseAccount, { method: "POST" });
+export const reorderAccounts = (order: string[]) =>
+    request("/accounts/reorder", parseAccountArray, { method: "POST", ...jsonBody({ order }) });
+
+// Net worth snapshots
+export const fetchNetWorthMonth = (yearMonth: string) => request(`/net-worth/${yearMonth}`, parseNetWorthMonth);
+export const fetchNetWorthHistory = () => request("/net-worth/history", parseNetWorthHistory);
+export const saveNetWorthMonth = (
+    yearMonth: string,
+    rows: { accountId: string; value: number | null; note?: string }[],
+) => request(`/net-worth/${yearMonth}`, parseNetWorthMonth, { method: "POST", ...jsonBody({ rows }) });
 
 // Summary
 export const fetchSummary = (yearMonth: string) => request(`/summary?month=${yearMonth}`, parseSummary);

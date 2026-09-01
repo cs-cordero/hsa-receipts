@@ -36,6 +36,17 @@ function createTestTemplate(stage: "dev" | "prod"): Template {
         partitionKey: { name: "yearMonth", type: dynamodb.AttributeType.STRING },
         sortKey: { name: "sortId", type: dynamodb.AttributeType.STRING },
     });
+    const profileTable = new dynamodb.Table(helperStack, "ProfileTable", {
+        partitionKey: { name: "householdId", type: dynamodb.AttributeType.STRING },
+        sortKey: { name: "personId", type: dynamodb.AttributeType.STRING },
+    });
+    const accountTable = new dynamodb.Table(helperStack, "AccountTable", {
+        partitionKey: { name: "accountId", type: dynamodb.AttributeType.STRING },
+    });
+    const netWorthSnapshotTable = new dynamodb.Table(helperStack, "NetWorthSnapshotTable", {
+        partitionKey: { name: "yearMonth", type: dynamodb.AttributeType.STRING },
+        sortKey: { name: "accountId", type: dynamodb.AttributeType.STRING },
+    });
 
     const stack = new PersonalFinanceWebStack(app, "TestPersonalFinanceWebStack", {
         env,
@@ -48,6 +59,9 @@ function createTestTemplate(stage: "dev" | "prod"): Template {
         budgetTable,
         budgetAuditLogTable,
         transactionsTable,
+        profileTable,
+        accountTable,
+        netWorthSnapshotTable,
     });
 
     return Template.fromStack(stack);
@@ -90,6 +104,9 @@ describe("PersonalFinanceWebStack", () => {
                         BUDGET_TABLE_NAME: Match.anyValue(),
                         BUDGET_AUDIT_LOG_TABLE_NAME: Match.anyValue(),
                         TRANSACTIONS_TABLE_NAME: Match.anyValue(),
+                        PROFILE_TABLE_NAME: Match.anyValue(),
+                        ACCOUNT_TABLE_NAME: Match.anyValue(),
+                        NETWORTH_SNAPSHOT_TABLE_NAME: Match.anyValue(),
                         SSM_API_KEY_PARAM: "/personal-finance/prod/anthropic-api-key",
                     }),
                 },

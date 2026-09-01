@@ -13,6 +13,16 @@ import boto3
 from ulid import ULID
 
 from corderohq.budget.editability import editability
+from corderohq.networth.models import (
+    HOUSEHOLD_PK,
+    PROFILE_SETTINGS_SK,
+    account_type_meta,
+    resolve_account_type_fields,
+    validate_asset_class,
+    validate_birth_year_month,
+    validate_loan_terms,
+    validate_owners,
+)
 
 _DYNAMO_RESOURCE = boto3.resource("dynamodb")
 _LOGGER = logging.getLogger(__name__)
@@ -177,7 +187,14 @@ class CategoryGroupTable:
         return response["Attributes"]
 
     def delete(self, group_id: str) -> None:
-        """Hard-delete a group. Caller must enforce empty-group invariant first."""
+        """Hard-delete a group by key.
+
+        The empty-group invariant (no active categories still point at it) is
+        enforced server-side by the sole caller, the `_delete_category_group`
+        handler (a 409 listing blocking categories). It lives there rather than
+        here because the check spans the Category table, which this group-scoped
+        wrapper has no handle on; the handler is the single API entry point.
+        """
         self._table.delete_item(Key={"groupId": group_id})
         _LOGGER.info("Deleted group: %s", group_id)
 
@@ -895,3 +912,446 @@ def compute_summary(
             "delta": int(total_budgeted - total_actual),
         },
     }
+
+
+# --- Net worth tracking ---
+#
+# HOUSEHOLD_PK and PROFILE_SETTINGS_SK are imported from networth.models (the
+# authoritative home for the Profile table's key constants); list_people skips the
+# reserved SETTINGS sentinel so a future household-settings item can't masquerade
+# as a person.
+
+
+class ProfileTable:
+    """The household's people.
+
+    Item-collection design: PK is the literal "HOUSEHOLD", one item per person
+    keyed by a ULID sort key. `list_people` is a single Query on the partition —
+    the only read pattern anything needs. `Account.owner` references a personId
+    from here, so age-based rules resolve owner -> person -> birthYearMonth from
+    data rather than any hardcoded string.
+    """
+
+    def __init__(self, table_name: str) -> None:
+        self._table = _DYNAMO_RESOURCE.Table(table_name)
+
+    def list_people(self) -> list[dict[str, Any]]:
+        """Return every person in the household, sorted by name (case-insensitive).
+
+        The reserved SETTINGS sentinel SK (if it ever exists) is excluded — it is
+        not a person.
+        """
+        response = self._table.query(
+            KeyConditionExpression="householdId = :pk",
+            ExpressionAttributeValues={":pk": HOUSEHOLD_PK},
+        )
+        people = [p for p in response["Items"] if p["personId"] != PROFILE_SETTINGS_SK]
+        return sorted(people, key=lambda p: (str(p.get("name", "")).lower(), p["personId"]))
+
+    def get_person(self, person_id: str) -> dict[str, Any] | None:
+        response = self._table.get_item(Key={"householdId": HOUSEHOLD_PK, "personId": person_id})
+        return response.get("Item")
+
+    def create_person(self, name: str, birth_year_month: str) -> dict[str, Any]:
+        """Create a person. Validates name non-empty and birthYearMonth as YYYY-MM."""
+        name = name.strip()
+        if not name:
+            raise ValueError("Person name must not be empty")
+        birth_year_month = validate_birth_year_month(birth_year_month)
+
+        now = datetime.now(tz=UTC).isoformat()
+        item: dict[str, Any] = {
+            "householdId": HOUSEHOLD_PK,
+            "personId": str(ULID()),
+            "name": name,
+            "birthYearMonth": birth_year_month,
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        self._table.put_item(Item=item)
+        _LOGGER.info("Created person: %s (%s)", item["name"], item["personId"])
+        return item
+
+    def update_person(
+        self, person_id: str, name: str | None = None, birth_year_month: str | None = None
+    ) -> dict[str, Any] | None:
+        """Update a person's name and/or birthYearMonth. Returns the item, or None if absent."""
+        if self.get_person(person_id) is None:
+            return None
+
+        set_parts: list[str] = ["updatedAt = :now"]
+        values: dict[str, Any] = {":now": datetime.now(tz=UTC).isoformat()}
+        names: dict[str, str] = {}
+
+        if name is not None:
+            name = name.strip()
+            if not name:
+                raise ValueError("Person name must not be empty")
+            set_parts.append("#n = :name")
+            names["#n"] = "name"
+            values[":name"] = name
+        if birth_year_month is not None:
+            values[":bym"] = validate_birth_year_month(birth_year_month)
+            set_parts.append("birthYearMonth = :bym")
+
+        kwargs: dict[str, Any] = {
+            "Key": {"householdId": HOUSEHOLD_PK, "personId": person_id},
+            "UpdateExpression": "SET " + ", ".join(set_parts),
+            "ExpressionAttributeValues": values,
+            "ReturnValues": "ALL_NEW",
+        }
+        if names:
+            kwargs["ExpressionAttributeNames"] = names
+        response = self._table.update_item(**kwargs)
+        return response["Attributes"]
+
+    def delete_person(self, person_id: str) -> None:
+        """Hard-delete a person by key.
+
+        The no-referencing-accounts invariant is enforced server-side by the sole
+        caller, the `_delete_person` handler (a 409 when `accounts_with_owner` is
+        non-empty). It lives there rather than here because the check spans the
+        Account table, which this Profile-scoped wrapper has no handle on; the
+        handler is the single API entry point, so the invariant always holds.
+        """
+        self._table.delete_item(Key={"householdId": HOUSEHOLD_PK, "personId": person_id})
+        _LOGGER.info("Deleted person: %s", person_id)
+
+
+def _loan_terms_for_storage(loan_terms: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of loanTerms with `interestRate` as a Decimal for DynamoDB.
+
+    The boto3 resource client rejects Python floats ("Float types are not
+    supported. Use Decimal types instead"). `interestRate` arrives as a float
+    (e.g. 0.04875); convert via str() so we store the exact decimal the user
+    entered rather than a binary-float approximation. `monthlyPayment` is already
+    an int (millionths). The handler's JSON encoder turns the Decimal back into a
+    float on read, so the API contract is unchanged.
+    """
+    stored = dict(loan_terms)
+    stored["interestRate"] = Decimal(str(stored["interestRate"]))
+    return stored
+
+
+class AccountTable:
+    """Financial accounts (assets and liabilities).
+
+    Mirrors the CategoryTable pattern: PK-only, soft-deactivation, small item
+    count so Scan is fine. Enum + loanTerms validation is delegated to
+    networth.models so the same rules apply on create and edit.
+    """
+
+    def __init__(self, table_name: str) -> None:
+        self._table = _DYNAMO_RESOURCE.Table(table_name)
+
+    def list_active(self) -> list[dict[str, Any]]:
+        """Return active accounts, sorted by sortOrder then name."""
+        response = self._table.scan(
+            FilterExpression="active = :val",
+            ExpressionAttributeValues={":val": True},
+        )
+        return self._sorted(response["Items"])
+
+    def list_all(self) -> list[dict[str, Any]]:
+        """Return all accounts (active and inactive), sorted by sortOrder then name."""
+        response = self._table.scan()
+        return self._sorted(response["Items"])
+
+    @staticmethod
+    def _sorted(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return sorted(items, key=lambda a: (int(a.get("sortOrder", 0)), str(a.get("name", "")).lower()))
+
+    def get(self, account_id: str) -> dict[str, Any] | None:
+        response = self._table.get_item(Key={"accountId": account_id})
+        return response.get("Item")
+
+    def _name_exists(self, name: str, exclude_id: str | None = None) -> bool:
+        """Case-insensitive name uniqueness check across active + inactive accounts.
+
+        Race condition: Scan-then-write with no DynamoDB-level unique constraint on
+        `name`, identical to CategoryTable._name_exists. Two simultaneous creates
+        with the same name can both pass and both write. Accepted for the same
+        reason — single-household app, concurrent writers vanishingly rare; a
+        name-keyed GSI would be complexity out of proportion to the risk. Rename or
+        merge manually if a duplicate ever slips through.
+        """
+        lower_name = name.lower()
+        return any(a["name"].lower() == lower_name and a["accountId"] != exclude_id for a in self.list_all())
+
+    def _next_sort_order(self) -> int:
+        accounts = self.list_all()
+        if not accounts:
+            return 0
+        return max(int(a.get("sortOrder", 0)) for a in accounts) + 1
+
+    def create(
+        self,
+        *,
+        name: str,
+        account_type: str,
+        asset_class: str | None,
+        owners: list[str],
+        excluded_from_net_worth: bool = False,
+        loan_terms: dict[str, Any] | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        """Create an account. The account TYPE is authoritative.
+
+        `liability`, the effective `assetClass` (when the type fixes it), and
+        whether `loanTerms` are permitted are all derived from the type via
+        `resolve_account_type_fields` — the client cannot assert a contradictory
+        combination (no US-equity mortgage, no liability without a liability type).
+
+        `owners` is a required non-empty list of personIds, stored as-is; each id's
+        existence in the household is validated by the handler (a Profile lookup),
+        the same way category groupId existence is checked at the handler layer
+        rather than in the table wrapper.
+
+        `excluded_from_net_worth` marks an account that is tracked (its balances are
+        still recorded and displayed) but left out of the Total Assets / Total
+        Liabilities / Net Worth sums — e.g. a 529 or custodial account you follow
+        but that isn't part of the household's own net worth.
+        """
+        name = name.strip()
+        if not name:
+            raise ValueError("Account name must not be empty")
+        account_type, liability, asset_class, normalized_loan_terms = resolve_account_type_fields(
+            account_type, asset_class, loan_terms
+        )
+        normalized_owners = validate_owners(owners)
+        if not isinstance(excluded_from_net_worth, bool):
+            raise ValueError("excludedFromNetWorth must be a boolean")
+        if self._name_exists(name):
+            raise ValueError(f"An account named '{name}' already exists")
+
+        now = datetime.now(tz=UTC).isoformat()
+        item: dict[str, Any] = {
+            "accountId": str(ULID()),
+            "name": name,
+            "accountType": account_type,
+            "assetClass": asset_class,
+            "liability": liability,
+            "owners": normalized_owners,
+            "excludedFromNetWorth": excluded_from_net_worth,
+            "active": True,
+            "sortOrder": self._next_sort_order(),
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        # Optional fields are omitted (not stored as null) when absent, so a row
+        # only carries what was actually asserted.
+        if normalized_loan_terms is not None:
+            item["loanTerms"] = _loan_terms_for_storage(normalized_loan_terms)
+        if notes is not None:
+            item["notes"] = notes
+
+        self._table.put_item(Item=item)
+        _LOGGER.info("Created account: %s (%s)", item["name"], item["accountId"])
+        return item
+
+    def update(self, account_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+        """Partial edit of a mutable account field set.
+
+        Editable fields: name, assetClass, owners, excludedFromNetWorth, loanTerms,
+        notes, sortOrder. `accountType` and `liability` are IMMUTABLE after create
+        (the type drives liability, asset-class rules, and loan-term eligibility —
+        reclassifying is a deactivate-and-recreate). `assetClass` is editable only
+        for types that let the user choose it; on a fixed-class type it raises.
+        `loanTerms` is gated on the type's amortizing flag. `owners` is required and
+        replaced wholesale (never removed). A field present with value None REMOVEs
+        the optional attribute (loanTerms/notes).
+
+        Returns the updated item, or None if the account does not exist.
+        """
+        existing = self.get(account_id)
+        if existing is None:
+            return None
+        meta = account_type_meta(existing["accountType"])
+
+        set_parts: list[str] = ["updatedAt = :now"]
+        remove_parts: list[str] = []
+        values: dict[str, Any] = {":now": datetime.now(tz=UTC).isoformat()}
+        names: dict[str, str] = {}
+
+        if "name" in updates:
+            name = str(updates["name"]).strip()
+            if not name:
+                raise ValueError("Account name must not be empty")
+            if self._name_exists(name, exclude_id=account_id):
+                raise ValueError(f"An account named '{name}' already exists")
+            set_parts.append("#n = :name")
+            names["#n"] = "name"
+            values[":name"] = name
+        if "assetClass" in updates:
+            if meta.fixed_asset_class is not None:
+                raise ValueError(f"assetClass is fixed for {existing['accountType']} accounts and cannot be changed")
+            values[":ac"] = validate_asset_class(updates["assetClass"])
+            set_parts.append("assetClass = :ac")
+        if "sortOrder" in updates:
+            sort_order = updates["sortOrder"]
+            if isinstance(sort_order, bool) or not isinstance(sort_order, int):
+                raise ValueError("sortOrder must be an integer")
+            values[":so"] = sort_order
+            set_parts.append("sortOrder = :so")
+        if "owners" in updates:
+            # Wholesale replace; owners is required so there is no removal path.
+            # Aliased via ExpressionAttributeNames for consistency with other fields.
+            owners = validate_owners(updates["owners"])
+            set_parts.append("#ow = :owners")
+            names["#ow"] = "owners"
+            values[":owners"] = owners
+        if "excludedFromNetWorth" in updates:
+            excluded = updates["excludedFromNetWorth"]
+            if not isinstance(excluded, bool):
+                raise ValueError("excludedFromNetWorth must be a boolean")
+            values[":exc"] = excluded
+            set_parts.append("excludedFromNetWorth = :exc")
+        if "loanTerms" in updates:
+            if updates["loanTerms"] is None:
+                remove_parts.append("loanTerms")
+            else:
+                normalized = validate_loan_terms(updates["loanTerms"], amortizing=meta.amortizing)
+                if normalized is not None:  # always true for a non-None input; narrows the type
+                    set_parts.append("loanTerms = :lt")
+                    values[":lt"] = _loan_terms_for_storage(normalized)
+        if "notes" in updates:
+            if updates["notes"] is None:
+                remove_parts.append("notes")
+            else:
+                set_parts.append("notes = :notes")
+                values[":notes"] = str(updates["notes"])
+
+        expression = "SET " + ", ".join(set_parts)
+        if remove_parts:
+            expression += " REMOVE " + ", ".join(remove_parts)
+
+        kwargs: dict[str, Any] = {
+            "Key": {"accountId": account_id},
+            "UpdateExpression": expression,
+            "ExpressionAttributeValues": values,
+            "ReturnValues": "ALL_NEW",
+        }
+        if names:
+            kwargs["ExpressionAttributeNames"] = names
+        response = self._table.update_item(**kwargs)
+        return response["Attributes"]
+
+    def deactivate(self, account_id: str) -> dict[str, Any] | None:
+        """Soft-close an account. History rows are untouched. Returns the item, or None."""
+        return self._set_active(account_id, False)
+
+    def reactivate(self, account_id: str) -> dict[str, Any] | None:
+        """Reopen a soft-closed account. Returns the item, or None if absent."""
+        return self._set_active(account_id, True)
+
+    def _set_active(self, account_id: str, active: bool) -> dict[str, Any] | None:
+        if self.get(account_id) is None:
+            return None
+        now = datetime.now(tz=UTC).isoformat()
+        response = self._table.update_item(
+            Key={"accountId": account_id},
+            UpdateExpression="SET active = :val, updatedAt = :now",
+            ExpressionAttributeValues={":val": active, ":now": now},
+            ReturnValues="ALL_NEW",
+        )
+        _LOGGER.info("%s account %s", "Reactivated" if active else "Deactivated", account_id)
+        return response["Attributes"]
+
+    def reorder(self, account_ids_in_order: list[str]) -> None:
+        """Apply a new total ordering: write sortOrder = index for each id in the list."""
+        now = datetime.now(tz=UTC).isoformat()
+        for index, account_id in enumerate(account_ids_in_order):
+            self._table.update_item(
+                Key={"accountId": account_id},
+                UpdateExpression="SET sortOrder = :o, updatedAt = :now",
+                ExpressionAttributeValues={":o": index, ":now": now},
+            )
+
+    def accounts_with_owner(self, person_id: str) -> list[dict[str, str]]:
+        """Return [{accountId, name}] for every account that lists `person_id` as an owner.
+
+        Used by the handler to block deleting a person still referenced as an
+        account owner (409).
+        """
+        return [
+            {"accountId": a["accountId"], "name": a["name"]}
+            for a in self.list_all()
+            if person_id in a.get("owners", [])
+        ]
+
+
+class NetWorthSnapshotTable:
+    """Monthly per-account balance snapshots.
+
+    Mirrors the BudgetTable pattern: PK yearMonth, SK accountId. Sparse by design —
+    a missing row means "no value recorded", never zero. One month = a single
+    Query; the whole history = a Scan (trivial at ~20 accounts x 12 months/year).
+    """
+
+    def __init__(self, table_name: str) -> None:
+        self._table = _DYNAMO_RESOURCE.Table(table_name)
+
+    def get_month(self, year_month: str) -> list[dict[str, Any]]:
+        """Return every recorded row for a month (one per account with a value)."""
+        response = self._table.query(
+            KeyConditionExpression="yearMonth = :ym",
+            ExpressionAttributeValues={":ym": year_month},
+        )
+        return response["Items"]
+
+    def scan_all(self) -> list[dict[str, Any]]:
+        """Return every snapshot row across all months, paginating the Scan."""
+        items: list[dict[str, Any]] = []
+        params: dict[str, Any] = {}
+        while True:
+            response = self._table.scan(**params)
+            items.extend(response.get("Items", []))
+            if "LastEvaluatedKey" not in response:
+                break
+            params["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        return items
+
+    def put_single(self, year_month: str, account_id: str, value: int) -> None:
+        """Write a single snapshot row (value in integer millionths of a dollar)."""
+        self._table.put_item(
+            Item={
+                "yearMonth": year_month,
+                "accountId": account_id,
+                "value": value,
+                "updatedAt": datetime.now(tz=UTC).isoformat(),
+            }
+        )
+
+    def delete_single(self, year_month: str, account_id: str) -> None:
+        """Delete a single snapshot row (undo a mistaken entry)."""
+        self._table.delete_item(Key={"yearMonth": year_month, "accountId": account_id})
+
+    def upsert_month(self, year_month: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Upsert a month's rows and return the resulting stored state for the month.
+
+        Each row is {accountId, value, note?}. A numeric value writes/overwrites the
+        row; value=None deletes it. An optional non-empty `note` string is stored
+        alongside the value (put_item replaces the whole item, so omitting the note
+        clears any prior one). Notes are month-specific and never carried forward.
+        Accounts not present in `rows` are left untouched (upsert, not replace).
+        Returns get_month(year_month).
+        """
+        now = datetime.now(tz=UTC).isoformat()
+        for row in rows:
+            account_id = row["accountId"]
+            value = row.get("value")
+            if value is None:
+                self._table.delete_item(Key={"yearMonth": year_month, "accountId": account_id})
+            else:
+                item: dict[str, Any] = {
+                    "yearMonth": year_month,
+                    "accountId": account_id,
+                    "value": value,
+                    "updatedAt": now,
+                }
+                note = row.get("note")
+                if isinstance(note, str) and note.strip():
+                    item["note"] = note.strip()
+                self._table.put_item(Item=item)
+        _LOGGER.info("Upserted %d snapshot rows for %s", len(rows), year_month)
+        return self.get_month(year_month)

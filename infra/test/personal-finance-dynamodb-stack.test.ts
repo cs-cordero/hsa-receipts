@@ -19,8 +19,8 @@ describe("PersonalFinanceDynamoDbStack", () => {
             template = createTestTemplate("prod");
         });
 
-        test("creates four DynamoDB tables", () => {
-            template.resourceCountIs("AWS::DynamoDB::Table", 4);
+        test("creates eight DynamoDB tables", () => {
+            template.resourceCountIs("AWS::DynamoDB::Table", 8);
         });
 
         test("Category table has correct key schema", () => {
@@ -44,7 +44,7 @@ describe("PersonalFinanceDynamoDbStack", () => {
             template.hasResourceProperties("AWS::DynamoDB::Table", {
                 TableName: "BudgetAuditLog-prod",
                 KeySchema: [
-                    { AttributeName: "changedAtYearMonth", KeyType: "HASH" },
+                    { AttributeName: "entityType", KeyType: "HASH" },
                     { AttributeName: "sortId", KeyType: "RANGE" },
                 ],
             });
@@ -56,6 +56,33 @@ describe("PersonalFinanceDynamoDbStack", () => {
                 KeySchema: [
                     { AttributeName: "yearMonth", KeyType: "HASH" },
                     { AttributeName: "sortId", KeyType: "RANGE" },
+                ],
+            });
+        });
+
+        test("Profile table has correct key schema", () => {
+            template.hasResourceProperties("AWS::DynamoDB::Table", {
+                TableName: "Profile-prod",
+                KeySchema: [
+                    { AttributeName: "householdId", KeyType: "HASH" },
+                    { AttributeName: "personId", KeyType: "RANGE" },
+                ],
+            });
+        });
+
+        test("Account table has correct key schema", () => {
+            template.hasResourceProperties("AWS::DynamoDB::Table", {
+                TableName: "Account-prod",
+                KeySchema: [{ AttributeName: "accountId", KeyType: "HASH" }],
+            });
+        });
+
+        test("NetWorthSnapshot table has correct key schema", () => {
+            template.hasResourceProperties("AWS::DynamoDB::Table", {
+                TableName: "NetWorthSnapshot-prod",
+                KeySchema: [
+                    { AttributeName: "yearMonth", KeyType: "HASH" },
+                    { AttributeName: "accountId", KeyType: "RANGE" },
                 ],
             });
         });

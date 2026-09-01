@@ -181,6 +181,12 @@ main {
     text-align: right;
     font-variant-numeric: tabular-nums;
 }
+/* `.data-table td` (specificity 0-1-1) sets text-align:left, which out-ranks the
+   bare `.num` class (0-1-0). This raises `.num` above it so numeric cells in any
+   data-table right-align as intended. */
+.data-table td.num {
+    text-align: right;
+}
 
 .nowrap {
     white-space: nowrap;
@@ -217,6 +223,276 @@ main {
     align-items: center;
     margin-bottom: 1rem;
     flex-wrap: wrap;
+}
+
+/* Section header with an inline action button (e.g. "+ Add account"). */
+.section-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+.section-heading h1,
+.section-heading h2 {
+    margin: 0;
+}
+
+/* Labeled, toggle-able create/edit form (accounts, people). */
+.account-form {
+    background: #fff;
+    padding: 1.25rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    margin: 1rem 0 1.5rem;
+    max-width: 640px;
+}
+.account-form h2 {
+    margin-top: 0;
+}
+.form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    margin-bottom: 0.9rem;
+}
+.form-field > label {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: #334155;
+}
+.form-field .checkbox-label {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.4rem;
+    font-weight: 400;
+    color: inherit;
+}
+.owners-checkboxes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.9rem;
+}
+.owners-checkboxes label {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-weight: 400;
+}
+.loan-terms-fields {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+/* Each loan-term input stacks a small caption above it. */
+.loan-term-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+.loan-term-field > label {
+    font-weight: 500;
+    font-size: 0.78rem;
+    color: #64748b;
+}
+/* Cross-browser month + year picker (two selects). */
+.month-year-input {
+    display: inline-flex;
+    gap: 0.4rem;
+}
+
+/* --- Net worth: two-pane (record | history) layout --- */
+.networth-split {
+    display: flex;
+    gap: 1.5rem;
+    align-items: flex-start;
+}
+.networth-pane {
+    flex: 1 1 0;
+    min-width: 0; /* lets the history table scroll instead of blowing out the layout */
+}
+.networth-entry-pane {
+    flex-basis: 42%;
+}
+.networth-history-pane {
+    flex-basis: 58%;
+}
+@media (max-width: 1100px) {
+    .networth-split {
+        flex-direction: column;
+    }
+    .networth-pane {
+        width: 100%;
+        flex-basis: auto;
+    }
+}
+.pane-title {
+    margin: 0 0 0.75rem;
+}
+
+/* --- History table (wide, horizontally scrollable, sticky account column) --- */
+.networth-history-scroll {
+    overflow-x: auto;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+}
+.networth-history-table {
+    margin: 0;
+    white-space: nowrap;
+    /* Fixed layout + explicit column widths so the separate accounts and totals
+       tables line up column-for-column and share one horizontal scroll. */
+    table-layout: fixed;
+    width: max-content;
+}
+.nw-hist-label-col {
+    width: 200px;
+}
+.nw-hist-month-col {
+    width: 150px;
+}
+/* Account names may be long — let the sticky label column wrap within its width
+   instead of overflowing (month/number cells keep the table's nowrap). */
+.networth-history-table .nw-sticky-col {
+    white-space: normal;
+    word-break: break-word;
+}
+/* The totals live in their own table; a gap above it is the hard separation from
+   the last account row. */
+.networth-totals-table {
+    margin-top: 0.85rem;
+}
+.nw-sticky-col {
+    position: sticky;
+    left: 0;
+    background: #fff;
+    text-align: left;
+    font-weight: 500;
+    z-index: 1;
+}
+.networth-history-table thead .nw-sticky-col {
+    z-index: 2;
+}
+.nw-month-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font: inherit;
+    color: #2563eb;
+    padding: 0;
+}
+.nw-month-btn:hover {
+    text-decoration: underline;
+}
+.nw-selected {
+    background: #eff6ff;
+}
+.nw-group-row td {
+    background: #f1f5f9;
+    font-weight: 600;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #64748b;
+    padding: 0; /* the sticky label owns the padding so it can pin to the left edge */
+}
+.nw-group-label {
+    position: sticky;
+    left: 0;
+    display: inline-block;
+    padding: 0.6rem 0.75rem; /* matches .data-table td so it aligns with the Account column */
+}
+.nw-total-row td {
+    font-weight: 600;
+    border-top: 2px solid #cbd5e1;
+    background: #f8fafc;
+}
+.nw-networth-row td {
+    color: #0f172a;
+    font-size: 1.02em;
+}
+.muted {
+    color: #cbd5e1;
+}
+
+/* --- Net-worth-over-time chart (single-series line) --- */
+.networth-chart {
+    position: relative;
+}
+.networth-chart svg {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+.nw-chart-grid {
+    stroke: #eef2f6;
+    stroke-width: 1;
+}
+.nw-chart-zero {
+    stroke: #94a3b8;
+    stroke-width: 1;
+    stroke-dasharray: 3 3;
+}
+.nw-chart-axis {
+    fill: #94a3b8;
+    font-size: 13px;
+}
+.nw-chart-area {
+    fill: rgba(37, 99, 235, 0.1);
+    stroke: none;
+}
+.nw-chart-line {
+    fill: none;
+    stroke: #2563eb;
+    stroke-width: 2;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+}
+.nw-chart-dot {
+    fill: #2563eb;
+}
+.nw-chart-dot-active {
+    fill: #1d4ed8;
+    stroke: #fff;
+    stroke-width: 2;
+}
+.nw-chart-crosshair {
+    stroke: #cbd5e1;
+    stroke-width: 1;
+    stroke-dasharray: 3 3;
+}
+.nw-chart-last-label {
+    fill: #2563eb;
+    font-size: 14px;
+    font-weight: 600;
+    /* White halo so the callout stays legible where it overlaps a y-axis number. */
+    paint-order: stroke;
+    stroke: #ffffff;
+    stroke-width: 3px;
+    stroke-linejoin: round;
+}
+.nw-chart-tooltip {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    background: #0f172a;
+    color: #fff;
+    padding: 0.35rem 0.55rem;
+    border-radius: 5px;
+    font-size: 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    pointer-events: none;
+}
+.form-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+/* A derived/immutable value shown in a form where an input would otherwise be. */
+.readonly-field {
+    padding: 0.2rem 0;
+    color: #1e293b;
 }
 
 .add-form.inline {
@@ -338,6 +614,88 @@ textarea:focus {
     display: flex;
     gap: 0.5rem;
     margin-bottom: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+/* Uneditable net-worth summary row below the entry tables. */
+.nw-networth-summary {
+    margin-top: 0.6rem;
+}
+
+/* Fixed column layout so the Assets and Liabilities tables share widths and line
+   up column-for-column (two separate tables otherwise size to their own content). */
+.networth-grid {
+    table-layout: fixed;
+    width: 100%;
+}
+.networth-grid .nw-col-account {
+    width: 58%;
+}
+.networth-grid .nw-col-value {
+    width: 42%;
+}
+/* The carried-from note now lives under the value input (right-aligned via the
+   .num cell) instead of a trailing empty column, so the value reaches the edge. */
+.nw-carried-note {
+    font-size: 0.78rem;
+    color: #94a3b8;
+    margin-top: 0.15rem;
+}
+
+/* Value + per-account note toggle on one line; input flexes, icon is fixed. */
+.nw-value-row {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+.networth-grid .nw-value-row .currency-input {
+    flex: 1;
+    min-width: 0;
+    width: auto;
+}
+.nw-note-toggle {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #cbd5e1;
+    font-size: 0.85rem;
+    line-height: 1;
+    padding: 0 0.15rem;
+}
+.nw-note-toggle.has-note {
+    color: #2563eb;
+}
+.nw-note-editor {
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 0.3rem;
+    font: inherit;
+    text-align: left; /* notes are prose, not a number, despite the .num cell */
+    resize: vertical;
+}
+/* "Excluded from net worth" badge shown beside an account name. */
+.nw-excluded-badge {
+    margin-left: 0.4rem;
+    vertical-align: middle;
+}
+/* History cell note indicator (hover shows the note text via title). */
+.nw-note-dot {
+    color: #2563eb;
+    font-size: 0.6em;
+    margin-left: 2px;
+    cursor: help;
+}
+/* Account type shown as a muted sub-line under the name (its own column was
+   dropped to free width for a roomy Account and a Value that fits large numbers). */
+.nw-entry-type {
+    font-size: 0.78rem;
+    color: #94a3b8;
+}
+.networth-grid .currency-input {
+    width: 100%;
+    box-sizing: border-box;
+    text-align: right;
 }
 
 .save-section {

@@ -29,6 +29,9 @@ interface PersonalFinanceWebStackProps extends cdk.StackProps {
     readonly budgetTable: dynamodb.ITable;
     readonly budgetAuditLogTable: dynamodb.ITable;
     readonly transactionsTable: dynamodb.ITable;
+    readonly profileTable: dynamodb.ITable;
+    readonly accountTable: dynamodb.ITable;
+    readonly netWorthSnapshotTable: dynamodb.ITable;
 }
 
 /**
@@ -39,13 +42,13 @@ interface PersonalFinanceWebStackProps extends cdk.StackProps {
  * - Cognito User Pool Group: budget-admin-{stage} (admin override authorization for budget feature)
  * - CloudWatch log group: /aws/lambda/personal-finance-handler-{stage}
  * - Lambda function: personal-finance-handler-{stage} (Python 3.13)
- * - IAM policy: DynamoDB read/write on all personal-finance tables, SSM GetParameter for API key
+ * - IAM policy: DynamoDB read/write on all personal-finance tables (incl. Profile, Account), SSM GetParameter for API key
  * - CloudWatch log group: /aws/lambda/budget-scheduled-densify-{stage}
  * - Lambda function: budget-scheduled-densify-{stage} (Python 3.13, cron-driven)
  * - IAM role: scheduler invoke role for the densify Lambda
  * - EventBridge Schedule: budget-scheduled-densify-{stage} (cron(0 0 1 * ? *) America/New_York)
  * - API Gateway HTTP API: personal-finance-api-{stage} (Cognito JWT authorizer)
- * - API Gateway routes: /api/category-groups (+ /{groupId} rename / deactivate / reorder), /api/categories (+ /{categoryId} GET-preview / PUT / DELETE / reactivate / deactivate / reorder), /api/budget/{yearMonth} (+ /replace, /pin), /api/transactions (+ /upload, /commit, /update, /delete), /api/summary, /api/audit-log
+ * - API Gateway routes: /api/category-groups (+ /{groupId} rename / deactivate / reorder), /api/categories (+ /{categoryId} GET-preview / PUT / DELETE / reactivate / deactivate / reorder), /api/budget/{yearMonth} (+ /replace, /pin), /api/transactions (+ /upload, /commit, /update, /delete), /api/summary, /api/audit-log, /api/profile (+ /people, /people/{personId} PUT / delete), /api/accounts (+ /reorder, /{accountId} PUT / deactivate / reactivate), /api/net-worth/history, /api/net-worth/{yearMonth} (GET / POST)
  * - S3 bucket: personal-finance-assets-{stage}-{account}-{region} (frontend assets)
  * - CloudFront distribution: S3 origin (frontend) + API Gateway origin (/api/*) + Cognito proxy (/oauth2/*)
  * - Route 53 A record: {stage domain} → CloudFront
@@ -145,6 +148,9 @@ export class PersonalFinanceWebStack extends cdk.Stack {
                 BUDGET_TABLE_NAME: props.budgetTable.tableName,
                 BUDGET_AUDIT_LOG_TABLE_NAME: props.budgetAuditLogTable.tableName,
                 TRANSACTIONS_TABLE_NAME: props.transactionsTable.tableName,
+                PROFILE_TABLE_NAME: props.profileTable.tableName,
+                ACCOUNT_TABLE_NAME: props.accountTable.tableName,
+                NETWORTH_SNAPSHOT_TABLE_NAME: props.netWorthSnapshotTable.tableName,
                 SSM_API_KEY_PARAM: `/personal-finance/${stage}/anthropic-api-key`,
                 STAGE: stage,
             },
@@ -155,6 +161,9 @@ export class PersonalFinanceWebStack extends cdk.Stack {
         props.budgetTable.grantReadWriteData(apiHandler);
         props.budgetAuditLogTable.grantReadWriteData(apiHandler);
         props.transactionsTable.grantReadWriteData(apiHandler);
+        props.profileTable.grantReadWriteData(apiHandler);
+        props.accountTable.grantReadWriteData(apiHandler);
+        props.netWorthSnapshotTable.grantReadWriteData(apiHandler);
 
         apiHandler.addToRolePolicy(
             new iam.PolicyStatement({
@@ -297,6 +306,27 @@ export class PersonalFinanceWebStack extends cdk.Stack {
             // Read endpoints
             { path: "/api/summary", methods: [apigatewayv2.HttpMethod.GET] },
             { path: "/api/audit-log", methods: [apigatewayv2.HttpMethod.GET] },
+
+            // Household profile (net worth)
+            { path: "/api/profile", methods: [apigatewayv2.HttpMethod.GET] },
+            { path: "/api/profile/people", methods: [apigatewayv2.HttpMethod.POST] },
+            { path: "/api/profile/people/{personId}", methods: [apigatewayv2.HttpMethod.PUT] },
+            { path: "/api/profile/people/{personId}/delete", methods: [apigatewayv2.HttpMethod.POST] },
+
+            // Accounts (net worth)
+            { path: "/api/accounts", methods: [apigatewayv2.HttpMethod.GET, apigatewayv2.HttpMethod.POST] },
+            { path: "/api/accounts/reorder", methods: [apigatewayv2.HttpMethod.POST] },
+            { path: "/api/accounts/{accountId}", methods: [apigatewayv2.HttpMethod.PUT] },
+            { path: "/api/accounts/{accountId}/deactivate", methods: [apigatewayv2.HttpMethod.POST] },
+            { path: "/api/accounts/{accountId}/reactivate", methods: [apigatewayv2.HttpMethod.POST] },
+
+            // Net worth snapshots. The static /history route sits alongside the
+            // /{yearMonth} param route — HTTP API matches the exact segment first.
+            { path: "/api/net-worth/history", methods: [apigatewayv2.HttpMethod.GET] },
+            {
+                path: "/api/net-worth/{yearMonth}",
+                methods: [apigatewayv2.HttpMethod.GET, apigatewayv2.HttpMethod.POST],
+            },
         ];
 
         for (const route of routes) {

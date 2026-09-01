@@ -39,6 +39,10 @@ export default defineConfig({
     ],
     server: {
         port: 5174,
+        // Fail loudly if 5174 is taken instead of drifting to 5175+. The dev Cognito
+        // app client only whitelists http://localhost:5174/callback, so any other port
+        // breaks the OAuth redirect with an invalid_request error.
+        strictPort: true,
         proxy: {
             // auth.ts POSTs /oauth2/token and api.ts hits /api/* as relative URLs because
             // CloudFront proxies these to Cognito / API Gateway in prod. Mirror that here so

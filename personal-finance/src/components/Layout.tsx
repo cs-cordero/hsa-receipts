@@ -21,6 +21,8 @@ export default function Layout() {
                     <NavLink to="/transactions">Transactions</NavLink>
                     <NavLink to="/upload">Upload</NavLink>
                     <NavLink to="/categories">Categories</NavLink>
+                    <NavLink to="/accounts">Accounts</NavLink>
+                    <NavLink to="/net-worth">Net Worth</NavLink>
                     <NavLink to="/audit-log">Audit Log</NavLink>
                     {isAdminUser && <NavLink to="/admin">Admin</NavLink>}
                     {isAdminUser && (
