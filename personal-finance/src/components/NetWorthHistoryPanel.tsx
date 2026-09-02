@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchNetWorthHistory } from "../api";
 import { formatCurrency, formatYearMonth } from "../format";
 import { useStatus } from "../hooks";
-import type { NetWorthHistory } from "../types";
+import type { Account, NetWorthHistory } from "../types";
 import NetWorthChart from "./NetWorthChart";
 import StatusMessage from "./StatusMessage";
 
@@ -39,9 +39,13 @@ export default function NetWorthHistoryPanel({ reloadKey, selectedMonth, onSelec
 
     const { assets, liabilities } = useMemo(() => {
         const accounts = history?.accounts ?? [];
+        // Deactivated accounts sink to the bottom of their group; the sort is stable,
+        // so sortOrder is preserved within the active and inactive partitions.
+        const byActive = (arr: Account[]): Account[] =>
+            [...arr].sort((x, y) => (x.active === y.active ? 0 : x.active ? -1 : 1));
         return {
-            assets: accounts.filter((a) => !a.liability),
-            liabilities: accounts.filter((a) => a.liability),
+            assets: byActive(accounts.filter((a) => !a.liability)),
+            liabilities: byActive(accounts.filter((a) => a.liability)),
         };
     }, [history]);
 
@@ -50,14 +54,19 @@ export default function NetWorthHistoryPanel({ reloadKey, selectedMonth, onSelec
         [history],
     );
 
-    // Account name for the sticky first column, with an "Excluded" badge when the
-    // account is tracked-but-excluded from the totals below.
-    const accountLabel = (a: { name: string; excludedFromNetWorth: boolean }) => (
+    // Account name for the sticky first column, with an "Excluded" badge when it's
+    // tracked-but-excluded from the totals, and a "Deactivated" badge when closed.
+    const accountLabel = (a: Account) => (
         <>
             {a.name}
             {a.excludedFromNetWorth && (
                 <span className="badge badge-pinned nw-excluded-badge" title="Excluded from the totals below">
                     Excluded
+                </span>
+            )}
+            {!a.active && (
+                <span className="badge nw-deactivated-badge" title="Account is deactivated (history kept)">
+                    Deactivated
                 </span>
             )}
         </>

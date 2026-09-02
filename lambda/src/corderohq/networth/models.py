@@ -43,6 +43,7 @@ class AccountType(StrEnum):
     SAVINGS = "savings"
     BROKERAGE = "brokerage"
     RETIREMENT_401K = "401k"
+    RETIREMENT_403B = "403b"
     ROTH_IRA = "roth_ira"
     TRADITIONAL_IRA = "traditional_ira"
     HSA = "hsa"
@@ -59,15 +60,18 @@ class AssetClass(StrEnum):
     """Asset classes. Values are stored verbatim in `Account.assetClass`.
 
     In the simulation feature this is the key that maps to a return distribution
-    (cash ~0% real, us_equity lognormal with drift+vol, etc.), which is why it is
+    (cash ~0% real, us_equity_large_cap lognormal with drift+vol, etc.), which is why it is
     a controlled enum rather than free text.
     """
 
     CASH = "cash"
-    US_EQUITY = "us_equity"
+    US_EQUITY_LARGE_CAP = "us_equity_large_cap"
+    US_EQUITY_SMALL_CAP = "us_equity_small_cap"
     INTL_EQUITY = "intl_equity"
     BONDS = "bonds"
+    FIXED_INCOME = "fixed_income"
     REAL_ESTATE = "real_estate"
+    TARGET_DATE = "target_date"
     OTHER = "other"
 
 
@@ -98,6 +102,7 @@ _ACCOUNT_TYPE_META: dict[AccountType, AccountTypeMeta] = {
     AccountType.SAVINGS: AccountTypeMeta(liability=False, fixed_asset_class=AssetClass.CASH, amortizing=False),
     AccountType.BROKERAGE: AccountTypeMeta(liability=False, fixed_asset_class=None, amortizing=False),
     AccountType.RETIREMENT_401K: AccountTypeMeta(liability=False, fixed_asset_class=None, amortizing=False),
+    AccountType.RETIREMENT_403B: AccountTypeMeta(liability=False, fixed_asset_class=None, amortizing=False),
     AccountType.ROTH_IRA: AccountTypeMeta(liability=False, fixed_asset_class=None, amortizing=False),
     AccountType.TRADITIONAL_IRA: AccountTypeMeta(liability=False, fixed_asset_class=None, amortizing=False),
     AccountType.HSA: AccountTypeMeta(liability=False, fixed_asset_class=None, amortizing=False),
@@ -119,24 +124,24 @@ def account_type_meta(account_type: str) -> AccountTypeMeta:
 
 
 def resolve_account_type_fields(
-    account_type: Any, asset_class: Any, loan_terms: Any
-) -> tuple[str, bool, str, dict[str, Any] | None]:
-    """Authoritatively derive (accountType, liability, assetClass, loanTerms).
+    account_type: Any, asset_classes: Any, loan_terms: Any
+) -> tuple[str, bool, list[str], dict[str, Any] | None]:
+    """Authoritatively derive (accountType, liability, assetClasses, loanTerms).
 
-    `liability` comes from the type, never the client. `assetClass` is forced when
-    the type fixes it (client value ignored) and otherwise validated against the
-    enum. `loanTerms` is gated on the type's `amortizing` flag. Raises ValueError
-    on any invalid or disallowed input; the table wrapper/handler surface that as a
-    400.
+    `liability` comes from the type, never the client. `assetClasses` is a non-empty
+    set of classes: forced to a single value when the type fixes it (client value
+    ignored), otherwise the client's list is validated against the enum. `loanTerms`
+    is gated on the type's `amortizing` flag. Raises ValueError on any invalid or
+    disallowed input; the table wrapper/handler surface that as a 400.
     """
     account_type = validate_account_type(account_type)
     meta = _ACCOUNT_TYPE_META[AccountType(account_type)]
     if meta.fixed_asset_class is not None:
-        resolved_asset_class = str(meta.fixed_asset_class)
+        resolved_asset_classes = [str(meta.fixed_asset_class)]
     else:
-        resolved_asset_class = validate_asset_class(asset_class)
+        resolved_asset_classes = validate_asset_classes(asset_classes)
     normalized_loan_terms = validate_loan_terms(loan_terms, amortizing=meta.amortizing)
-    return account_type, meta.liability, resolved_asset_class, normalized_loan_terms
+    return account_type, meta.liability, resolved_asset_classes, normalized_loan_terms
 
 
 def validate_account_type(value: Any) -> str:
@@ -151,6 +156,25 @@ def validate_asset_class(value: Any) -> str:
     if not isinstance(value, str) or value not in _ASSET_CLASS_VALUES:
         raise ValueError(f"Invalid assetClass '{value}'; expected one of {sorted(_ASSET_CLASS_VALUES)}")
     return value
+
+
+def validate_asset_classes(value: Any) -> list[str]:
+    """Validate an account's `assetClasses` list; return a normalized copy.
+
+    An account holds one or more asset classes (a set — see the per-value design).
+    Rules: a non-empty list, each entry a valid AssetClass value, duplicates
+    collapsed with original order preserved. Mirrors `validate_owners`.
+    """
+    if not isinstance(value, list) or not value:
+        raise ValueError("assetClasses must be a non-empty list")
+    seen: set[str] = set()
+    result: list[str] = []
+    for entry in value:
+        validate_asset_class(entry)
+        if entry not in seen:
+            seen.add(entry)
+            result.append(entry)
+    return result
 
 
 def validate_loan_terms(loan_terms: Any, amortizing: bool) -> dict[str, Any] | None:
@@ -239,6 +263,34 @@ def validate_birth_year_month(value: Any) -> str:
     if not isinstance(value, str) or not YEAR_MONTH_PATTERN.match(value):
         raise ValueError("birthYearMonth must be a YYYY-MM string")
     return value
+
+
+# Target-date funds are sold in 5-year vintages; the UI offers a dropdown, but the
+# server just enforces a plausible 4-digit year (a fund can be past its target date,
+# so no future-only rule).
+def validate_target_year(value: Any) -> int:
+    """Return `value` if it is a plausible 4-digit target year, else raise ValueError."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("targetYear must be an integer year")
+    if not (1990 <= value <= 2100):
+        raise ValueError("targetYear must be a 4-digit year in [1990, 2100]")
+    return value
+
+
+def resolve_target_year(asset_classes: list[str], target_year: Any) -> int | None:
+    """Enforce the target_date ↔ targetYear coupling; return the value to store or None.
+
+    `targetYear` is required and valid exactly when `target_date` is one of the
+    account's asset classes; otherwise it must be absent/None. Mirrors the
+    loanTerms "present only when relevant" rule.
+    """
+    if "target_date" in asset_classes:
+        if target_year is None:
+            raise ValueError("targetYear is required when target_date is one of the asset classes")
+        return validate_target_year(target_year)
+    if target_year is not None:
+        raise ValueError("targetYear is only allowed when target_date is an asset class")
+    return None
 
 
 _ACCOUNT_TYPE_VALUES = frozenset(t.value for t in AccountType)

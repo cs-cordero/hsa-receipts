@@ -18,10 +18,12 @@ from corderohq.networth.models import (
     PROFILE_SETTINGS_SK,
     account_type_meta,
     resolve_account_type_fields,
-    validate_asset_class,
+    resolve_target_year,
+    validate_asset_classes,
     validate_birth_year_month,
     validate_loan_terms,
     validate_owners,
+    validate_target_year,
 )
 
 _DYNAMO_RESOURCE = boto3.resource("dynamodb")
@@ -1089,18 +1091,20 @@ class AccountTable:
         *,
         name: str,
         account_type: str,
-        asset_class: str | None,
+        asset_classes: list[str] | None,
         owners: list[str],
         excluded_from_net_worth: bool = False,
+        target_year: int | None = None,
         loan_terms: dict[str, Any] | None = None,
         notes: str | None = None,
     ) -> dict[str, Any]:
         """Create an account. The account TYPE is authoritative.
 
-        `liability`, the effective `assetClass` (when the type fixes it), and
-        whether `loanTerms` are permitted are all derived from the type via
-        `resolve_account_type_fields` — the client cannot assert a contradictory
-        combination (no US-equity mortgage, no liability without a liability type).
+        `liability`, the effective `assetClasses` (a single forced value when the
+        type fixes it), and whether `loanTerms` are permitted are all derived from
+        the type via `resolve_account_type_fields` — the client cannot assert a
+        contradictory combination (no US-equity mortgage, no liability without a
+        liability type).
 
         `owners` is a required non-empty list of personIds, stored as-is; each id's
         existence in the household is validated by the handler (a Profile lookup),
@@ -1115,12 +1119,13 @@ class AccountTable:
         name = name.strip()
         if not name:
             raise ValueError("Account name must not be empty")
-        account_type, liability, asset_class, normalized_loan_terms = resolve_account_type_fields(
-            account_type, asset_class, loan_terms
+        account_type, liability, asset_classes, normalized_loan_terms = resolve_account_type_fields(
+            account_type, asset_classes, loan_terms
         )
         normalized_owners = validate_owners(owners)
         if not isinstance(excluded_from_net_worth, bool):
             raise ValueError("excludedFromNetWorth must be a boolean")
+        resolved_target_year = resolve_target_year(asset_classes, target_year)
         if self._name_exists(name):
             raise ValueError(f"An account named '{name}' already exists")
 
@@ -1129,7 +1134,7 @@ class AccountTable:
             "accountId": str(ULID()),
             "name": name,
             "accountType": account_type,
-            "assetClass": asset_class,
+            "assetClasses": asset_classes,
             "liability": liability,
             "owners": normalized_owners,
             "excludedFromNetWorth": excluded_from_net_worth,
@@ -1140,6 +1145,8 @@ class AccountTable:
         }
         # Optional fields are omitted (not stored as null) when absent, so a row
         # only carries what was actually asserted.
+        if resolved_target_year is not None:
+            item["targetYear"] = resolved_target_year
         if normalized_loan_terms is not None:
             item["loanTerms"] = _loan_terms_for_storage(normalized_loan_terms)
         if notes is not None:
@@ -1152,14 +1159,16 @@ class AccountTable:
     def update(self, account_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
         """Partial edit of a mutable account field set.
 
-        Editable fields: name, assetClass, owners, excludedFromNetWorth, loanTerms,
-        notes, sortOrder. `accountType` and `liability` are IMMUTABLE after create
-        (the type drives liability, asset-class rules, and loan-term eligibility —
-        reclassifying is a deactivate-and-recreate). `assetClass` is editable only
-        for types that let the user choose it; on a fixed-class type it raises.
-        `loanTerms` is gated on the type's amortizing flag. `owners` is required and
-        replaced wholesale (never removed). A field present with value None REMOVEs
-        the optional attribute (loanTerms/notes).
+        Editable fields: name, assetClasses, owners, excludedFromNetWorth, targetYear,
+        loanTerms, notes, sortOrder. `accountType` and `liability` are IMMUTABLE after
+        create (the type drives liability, asset-class rules, and loan-term
+        eligibility — reclassifying is a deactivate-and-recreate). `assetClasses` is
+        editable (a non-empty set, replaced wholesale) only for types that let the
+        user choose; on a fixed-class type it raises. `targetYear` is reconciled
+        against the effective asset-class set (required with `target_date`, cleared
+        without it). `loanTerms` is gated on the type's amortizing flag. `owners` is
+        required and replaced wholesale (never removed). A field present with value
+        None REMOVEs the optional attribute (loanTerms/notes).
 
         Returns the updated item, or None if the account does not exist.
         """
@@ -1182,11 +1191,13 @@ class AccountTable:
             set_parts.append("#n = :name")
             names["#n"] = "name"
             values[":name"] = name
-        if "assetClass" in updates:
+        if "assetClasses" in updates:
             if meta.fixed_asset_class is not None:
-                raise ValueError(f"assetClass is fixed for {existing['accountType']} accounts and cannot be changed")
-            values[":ac"] = validate_asset_class(updates["assetClass"])
-            set_parts.append("assetClass = :ac")
+                raise ValueError(
+                    f"assetClasses is fixed for {existing['accountType']} accounts and cannot be changed"
+                )
+            values[":ac"] = validate_asset_classes(updates["assetClasses"])
+            set_parts.append("assetClasses = :ac")
         if "sortOrder" in updates:
             sort_order = updates["sortOrder"]
             if isinstance(sort_order, bool) or not isinstance(sort_order, int):
@@ -1220,6 +1231,22 @@ class AccountTable:
             else:
                 set_parts.append("notes = :notes")
                 values[":notes"] = str(updates["notes"])
+
+        # Reconcile targetYear against the effective (post-update) asset-class set, so
+        # adding target_date requires a year and removing it clears a stale one — even
+        # when only one of the two fields is in `updates`.
+        effective_classes = values.get(":ac", existing.get("assetClasses", []))
+        proposed_year = updates.get("targetYear", existing.get("targetYear"))
+        if "target_date" in effective_classes:
+            if proposed_year is None:
+                raise ValueError("targetYear is required when target_date is one of the asset classes")
+            values[":ty"] = validate_target_year(proposed_year)
+            set_parts.append("targetYear = :ty")
+        else:
+            if updates.get("targetYear") is not None:
+                raise ValueError("targetYear is only allowed when target_date is an asset class")
+            if "targetYear" in existing:
+                remove_parts.append("targetYear")
 
         expression = "SET " + ", ".join(set_parts)
         if remove_parts:
@@ -1311,47 +1338,51 @@ class NetWorthSnapshotTable:
             params["ExclusiveStartKey"] = response["LastEvaluatedKey"]
         return items
 
-    def put_single(self, year_month: str, account_id: str, value: int) -> None:
-        """Write a single snapshot row (value in integer millionths of a dollar)."""
-        self._table.put_item(
-            Item={
-                "yearMonth": year_month,
-                "accountId": account_id,
-                "value": value,
-                "updatedAt": datetime.now(tz=UTC).isoformat(),
-            }
-        )
-
     def delete_single(self, year_month: str, account_id: str) -> None:
         """Delete a single snapshot row (undo a mistaken entry)."""
         self._table.delete_item(Key={"yearMonth": year_month, "accountId": account_id})
 
     def upsert_month(self, year_month: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Upsert a month's rows and return the resulting stored state for the month.
+        """Per-class merge upsert of a month's rows; returns the month's stored state.
 
-        Each row is {accountId, value, note?}. A numeric value writes/overwrites the
-        row; value=None deletes it. An optional non-empty `note` string is stored
-        alongside the value (put_item replaces the whole item, so omitting the note
-        clears any prior one). Notes are month-specific and never carried forward.
-        Accounts not present in `rows` are left untouched (upsert, not replace).
-        Returns get_month(year_month).
+        Each row is {accountId, classes: {class: millionths | None}, note?}. Semantics
+        (read-modify-write per account, so partial payloads never clobber history):
+        - a class mapped to a number is set; mapped to None is removed; classes NOT in
+          the map are left untouched.
+        - if the account's resulting per-class map is empty, the row is deleted.
+        - `note` (account-level, month-specific): a present non-empty string replaces
+          it, present-but-empty/None clears it, and an absent `note` key leaves any
+          existing note untouched.
+        Accounts not present in `rows` are untouched. Returns get_month(year_month).
         """
         now = datetime.now(tz=UTC).isoformat()
         for row in rows:
             account_id = row["accountId"]
-            value = row.get("value")
-            if value is None:
+            existing = self._table.get_item(Key={"yearMonth": year_month, "accountId": account_id}).get("Item") or {}
+            by_class: dict[str, Any] = dict(existing.get("byAssetClass") or {})
+            for cls, value in (row.get("classes") or {}).items():
+                if value is None:
+                    by_class.pop(cls, None)
+                else:
+                    by_class[cls] = value
+
+            if not by_class:
                 self._table.delete_item(Key={"yearMonth": year_month, "accountId": account_id})
-            else:
-                item: dict[str, Any] = {
-                    "yearMonth": year_month,
-                    "accountId": account_id,
-                    "value": value,
-                    "updatedAt": now,
-                }
-                note = row.get("note")
+                continue
+
+            item: dict[str, Any] = {
+                "yearMonth": year_month,
+                "accountId": account_id,
+                "byAssetClass": by_class,
+                "updatedAt": now,
+            }
+            # Note: absent key → preserve existing; present → replace/clear.
+            if "note" in row:
+                note = row["note"]
                 if isinstance(note, str) and note.strip():
                     item["note"] = note.strip()
-                self._table.put_item(Item=item)
+            elif "note" in existing:
+                item["note"] = existing["note"]
+            self._table.put_item(Item=item)
         _LOGGER.info("Upserted %d snapshot rows for %s", len(rows), year_month)
         return self.get_month(year_month)

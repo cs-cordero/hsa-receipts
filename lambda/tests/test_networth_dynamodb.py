@@ -90,12 +90,12 @@ class TestAccountTableCreate:
         result = accounts.create(
             name="Chase Checking",
             account_type="checking",
-            asset_class="cash",
+            asset_classes=["cash"],
             owners=["p1"],
         )
         assert result["name"] == "Chase Checking"
         assert result["accountType"] == "checking"
-        assert result["assetClass"] == "cash"
+        assert result["assetClasses"] == ["cash"]
         # liability is derived from the type, not passed in.
         assert result["liability"] is False
         assert result["owners"] == ["p1"]
@@ -110,26 +110,26 @@ class TestAccountTableCreate:
         result = accounts.create(
             name="Kid's 529",
             account_type="529",
-            asset_class="us_equity",
+            asset_classes=["us_equity_large_cap"],
             owners=["p1"],
             excluded_from_net_worth=True,
         )
         assert result["excludedFromNetWorth"] is True
 
     def test_mortgage_forces_liability_and_asset_class(self, accounts: AccountTable, mock: MagicMock) -> None:
-        # Client claims us_equity; the type forces liability=True and assetClass=other.
+        # Client claims equities; the type forces liability=True and assetClasses=[other].
         mock.scan.return_value = {"Items": [{"accountId": "a0", "name": "Other", "sortOrder": 4}]}
         loan_terms = {"interestRate": 0.045, "monthlyPayment": 2_500_000_000, "payoffYearMonth": "2045-06"}
         result = accounts.create(
             name="Mortgage",
             account_type="mortgage",
-            asset_class="us_equity",
+            asset_classes=["us_equity_large_cap"],
             owners=["p1", "p2"],
             loan_terms=loan_terms,
             notes="30-year fixed",
         )
         assert result["liability"] is True
-        assert result["assetClass"] == "other"
+        assert result["assetClasses"] == ["other"]
         assert result["owners"] == ["p1", "p2"]
         # interestRate is stored as Decimal (DynamoDB rejects floats); the rest is unchanged.
         assert result["loanTerms"]["interestRate"] == Decimal("0.045")
@@ -138,15 +138,39 @@ class TestAccountTableCreate:
         assert result["notes"] == "30-year fixed"
         assert result["sortOrder"] == 5  # max existing (4) + 1
 
+    def test_creates_target_date_with_year(self, accounts: AccountTable, mock: MagicMock) -> None:
+        mock.scan.return_value = {"Items": []}
+        result = accounts.create(
+            name="TDF",
+            account_type="401k",
+            asset_classes=["target_date", "cash"],
+            owners=["p1"],
+            target_year=2055,
+        )
+        assert result["assetClasses"] == ["target_date", "cash"]
+        assert result["targetYear"] == 2055
+
+    def test_target_date_requires_year(self, accounts: AccountTable, mock: MagicMock) -> None:
+        mock.scan.return_value = {"Items": []}
+        with pytest.raises(ValueError, match="targetYear is required"):
+            accounts.create(name="TDF", account_type="401k", asset_classes=["target_date"], owners=["p1"])
+
+    def test_year_rejected_without_target_date(self, accounts: AccountTable, mock: MagicMock) -> None:
+        mock.scan.return_value = {"Items": []}
+        with pytest.raises(ValueError, match="only allowed when target_date"):
+            accounts.create(
+                name="B", account_type="brokerage", asset_classes=["cash"], owners=["p1"], target_year=2055
+            )
+
     def test_rejects_empty_owners(self, accounts: AccountTable, mock: MagicMock) -> None:
         mock.scan.return_value = {"Items": []}
         with pytest.raises(ValueError, match="owners must be a non-empty list"):
-            accounts.create(name="X", account_type="checking", asset_class="cash", owners=[])
+            accounts.create(name="X", account_type="checking", asset_classes=["cash"], owners=[])
 
     def test_rejects_invalid_account_type(self, accounts: AccountTable, mock: MagicMock) -> None:
         mock.scan.return_value = {"Items": []}
         with pytest.raises(ValueError, match="Invalid accountType"):
-            accounts.create(name="X", account_type="chequing", asset_class="cash", owners=["p1"])
+            accounts.create(name="X", account_type="chequing", asset_classes=["cash"], owners=["p1"])
 
     def test_rejects_loan_terms_on_non_amortizing_type(self, accounts: AccountTable, mock: MagicMock) -> None:
         mock.scan.return_value = {"Items": []}
@@ -154,7 +178,7 @@ class TestAccountTableCreate:
             accounts.create(
                 name="Brokerage",
                 account_type="brokerage",
-                asset_class="us_equity",
+                asset_classes=["us_equity_large_cap"],
                 owners=["p1"],
                 loan_terms={"interestRate": 0.04, "monthlyPayment": 1, "payoffYearMonth": "2030-01"},
             )
@@ -162,7 +186,7 @@ class TestAccountTableCreate:
     def test_rejects_duplicate_name_case_insensitive(self, accounts: AccountTable, mock: MagicMock) -> None:
         mock.scan.return_value = {"Items": [{"accountId": "a1", "name": "Chase Checking", "sortOrder": 0}]}
         with pytest.raises(ValueError, match="already exists"):
-            accounts.create(name="chase checking", account_type="checking", asset_class="cash", owners=["p1"])
+            accounts.create(name="chase checking", account_type="checking", asset_classes=["cash"], owners=["p1"])
 
 
 class TestAccountTableUpdate:
@@ -177,20 +201,47 @@ class TestAccountTableUpdate:
         }
         mock.scan.return_value = {"Items": [{"accountId": "a1", "name": "Old", "sortOrder": 0}]}
         mock.update_item.return_value = {"Attributes": {"accountId": "a1", "name": "New"}}
-        accounts.update("a1", {"name": "New", "assetClass": "bonds"})
+        accounts.update("a1", {"name": "New", "assetClasses": ["bonds", "cash"]})
         kwargs = mock.update_item.call_args.kwargs
         expr = kwargs["UpdateExpression"]
-        assert "assetClass = :ac" in expr
+        assert "assetClasses = :ac" in expr
+        assert kwargs["ExpressionAttributeValues"][":ac"] == ["bonds", "cash"]
         assert "accountType" not in expr  # type is immutable
         assert kwargs["ExpressionAttributeNames"]["#n"] == "name"
 
     def test_rejects_asset_class_change_on_fixed_type(self, accounts: AccountTable, mock: MagicMock) -> None:
-        # Checking fixes assetClass to cash, so an override is rejected.
+        # Checking fixes assetClasses to [cash], so an override is rejected.
         mock.get_item.return_value = {
             "Item": {"accountId": "a1", "name": "A", "accountType": "checking", "liability": False}
         }
-        with pytest.raises(ValueError, match="assetClass is fixed"):
-            accounts.update("a1", {"assetClass": "us_equity"})
+        with pytest.raises(ValueError, match="assetClasses is fixed"):
+            accounts.update("a1", {"assetClasses": ["us_equity_large_cap"]})
+
+    def test_adding_target_date_requires_year(self, accounts: AccountTable, mock: MagicMock) -> None:
+        mock.get_item.return_value = {
+            "Item": {"accountId": "a1", "name": "A", "accountType": "brokerage", "assetClasses": ["cash"]}
+        }
+        mock.scan.return_value = {"Items": [{"accountId": "a1", "name": "A", "sortOrder": 0}]}
+        with pytest.raises(ValueError, match="targetYear is required"):
+            accounts.update("a1", {"assetClasses": ["target_date"]})
+
+    def test_removing_target_date_clears_stale_year(self, accounts: AccountTable, mock: MagicMock) -> None:
+        # Account had target_date + a year; switching classes to cash drops the year.
+        mock.get_item.return_value = {
+            "Item": {
+                "accountId": "a1",
+                "name": "A",
+                "accountType": "brokerage",
+                "assetClasses": ["target_date"],
+                "targetYear": 2055,
+            }
+        }
+        mock.scan.return_value = {"Items": [{"accountId": "a1", "name": "A", "sortOrder": 0}]}
+        mock.update_item.return_value = {"Attributes": {"accountId": "a1"}}
+        accounts.update("a1", {"assetClasses": ["cash"]})
+        kwargs = mock.update_item.call_args.kwargs
+        assert "REMOVE" in kwargs["UpdateExpression"]
+        assert "targetYear" in kwargs["UpdateExpression"]
 
     def test_updates_owners_wholesale(self, accounts: AccountTable, mock: MagicMock) -> None:
         mock.get_item.return_value = {
@@ -293,7 +344,9 @@ class TestAccountTableMisc:
 
 class TestNetWorthSnapshotTable:
     def test_get_month_queries_partition(self, snapshots: NetWorthSnapshotTable, mock: MagicMock) -> None:
-        mock.query.return_value = {"Items": [{"yearMonth": "2026-06", "accountId": "a1", "value": 100}]}
+        mock.query.return_value = {
+            "Items": [{"yearMonth": "2026-06", "accountId": "a1", "byAssetClass": {"cash": 100}}]
+        }
         result = snapshots.get_month("2026-06")
         assert result[0]["accountId"] == "a1"
         kwargs = mock.query.call_args.kwargs
@@ -301,48 +354,67 @@ class TestNetWorthSnapshotTable:
 
     def test_scan_all_paginates(self, snapshots: NetWorthSnapshotTable, mock: MagicMock) -> None:
         mock.scan.side_effect = [
-            {"Items": [{"yearMonth": "2026-05", "accountId": "a1", "value": 1}], "LastEvaluatedKey": {"k": 1}},
-            {"Items": [{"yearMonth": "2026-06", "accountId": "a1", "value": 2}]},
+            {
+                "Items": [{"yearMonth": "2026-05", "accountId": "a1", "byAssetClass": {"cash": 1}}],
+                "LastEvaluatedKey": {"k": 1},
+            },
+            {"Items": [{"yearMonth": "2026-06", "accountId": "a1", "byAssetClass": {"cash": 2}}]},
         ]
         result = snapshots.scan_all()
         assert len(result) == 2
         assert mock.scan.call_count == 2
 
-    def test_upsert_month_puts_values_and_deletes_nulls(
+    def test_upsert_month_merges_classes_and_deletes_when_empty(
         self, snapshots: NetWorthSnapshotTable, mock: MagicMock
     ) -> None:
-        mock.query.return_value = {"Items": [{"yearMonth": "2026-06", "accountId": "a1", "value": 500}]}
-        result = snapshots.upsert_month(
+        def get_item(**kwargs: object) -> dict[str, object]:
+            key = kwargs["Key"]
+            assert isinstance(key, dict)
+            if key["accountId"] == "a1":
+                return {
+                    "Item": {"yearMonth": "2026-06", "accountId": "a1", "byAssetClass": {"cash": 500, "bonds": 100}}
+                }
+            return {}  # a2 has no existing row
+
+        mock.get_item.side_effect = get_item
+        mock.query.return_value = {"Items": []}
+        snapshots.upsert_month(
             "2026-06",
             [
-                {"accountId": "a1", "value": 500},
-                {"accountId": "a2", "value": None},
+                {"accountId": "a1", "classes": {"cash": 600, "bonds": None}},  # update cash, clear bonds
+                {"accountId": "a2", "classes": {"cash": None}},  # nothing to clear → row stays empty → delete
             ],
         )
-        mock.put_item.assert_called_once()
         put_item = mock.put_item.call_args.kwargs["Item"]
-        assert put_item == {
-            "yearMonth": "2026-06",
-            "accountId": "a1",
-            "value": 500,
-            "updatedAt": put_item["updatedAt"],
-        }
+        assert put_item["accountId"] == "a1"
+        assert put_item["byAssetClass"] == {"cash": 600}  # cash merged, bonds removed, others untouched
         mock.delete_item.assert_called_once_with(Key={"yearMonth": "2026-06", "accountId": "a2"})
-        # Returned state comes from the post-write query.
-        assert result == [{"yearMonth": "2026-06", "accountId": "a1", "value": 500}]
 
     def test_delete_single(self, snapshots: NetWorthSnapshotTable, mock: MagicMock) -> None:
         snapshots.delete_single("2026-06", "a1")
         mock.delete_item.assert_called_once_with(Key={"yearMonth": "2026-06", "accountId": "a1"})
 
-    def test_upsert_month_stores_trimmed_note(self, snapshots: NetWorthSnapshotTable, mock: MagicMock) -> None:
+    def test_upsert_month_preserves_note_when_absent(self, snapshots: NetWorthSnapshotTable, mock: MagicMock) -> None:
+        mock.get_item.return_value = {
+            "Item": {"yearMonth": "2026-06", "accountId": "a1", "byAssetClass": {"cash": 500}, "note": "kept"}
+        }
         mock.query.return_value = {"Items": []}
-        snapshots.upsert_month("2026-06", [{"accountId": "a1", "value": 500, "note": "  bonus deposited  "}])
+        snapshots.upsert_month("2026-06", [{"accountId": "a1", "classes": {"cash": 600}}])  # no note key
         put_item = mock.put_item.call_args.kwargs["Item"]
-        assert put_item["note"] == "bonus deposited"
+        assert put_item["note"] == "kept"
 
-    def test_upsert_month_omits_blank_note(self, snapshots: NetWorthSnapshotTable, mock: MagicMock) -> None:
+    def test_upsert_month_replaces_note_trimmed(self, snapshots: NetWorthSnapshotTable, mock: MagicMock) -> None:
+        mock.get_item.return_value = {}
         mock.query.return_value = {"Items": []}
-        snapshots.upsert_month("2026-06", [{"accountId": "a1", "value": 500, "note": "   "}])
+        snapshots.upsert_month("2026-06", [{"accountId": "a1", "classes": {"cash": 500}, "note": "  bonus  "}])
+        put_item = mock.put_item.call_args.kwargs["Item"]
+        assert put_item["note"] == "bonus"
+
+    def test_upsert_month_clears_blank_note(self, snapshots: NetWorthSnapshotTable, mock: MagicMock) -> None:
+        mock.get_item.return_value = {
+            "Item": {"yearMonth": "2026-06", "accountId": "a1", "byAssetClass": {"cash": 500}, "note": "old"}
+        }
+        mock.query.return_value = {"Items": []}
+        snapshots.upsert_month("2026-06", [{"accountId": "a1", "classes": {"cash": 500}, "note": "   "}])
         put_item = mock.put_item.call_args.kwargs["Item"]
         assert "note" not in put_item

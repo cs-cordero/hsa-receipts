@@ -24,6 +24,7 @@ from corderohq.budget.auth import is_budget_admin
 from corderohq.budget.csv_import import categorize_transactions, map_columns
 from corderohq.budget.densify import densify, resolve_future_targets, walk_back_for
 from corderohq.budget.editability import editability
+from corderohq.networth.models import validate_asset_class
 from corderohq.networth.snapshots import build_history, build_month_view, compute_prefill
 from corderohq.util import YEAR_MONTH_PATTERN, get_env_var
 
@@ -1337,7 +1338,7 @@ def _post_account(event: dict[str, Any]) -> dict[str, Any]:
     if body is None:
         return _response(400, "Request body is required")
 
-    # `liability` and (for fixed-class types) `assetClass` are derived from the type
+    # `liability` and (for fixed-class types) `assetClasses` are derived from the type
     # server-side, so they are not required inputs — only name, type, and owners are.
     for field in ("name", "accountType"):
         if not body.get(field):
@@ -1351,9 +1352,10 @@ def _post_account(event: dict[str, Any]) -> dict[str, Any]:
         item = _ACCOUNT_TABLE.create(
             name=body["name"],
             account_type=body["accountType"],
-            asset_class=body.get("assetClass"),
+            asset_classes=body.get("assetClasses"),
             owners=owners,
             excluded_from_net_worth=bool(body.get("excludedFromNetWorth", False)),
+            target_year=body.get("targetYear"),
             loan_terms=body.get("loanTerms"),
             notes=body.get("notes"),
         )
@@ -1365,17 +1367,28 @@ def _post_account(event: dict[str, Any]) -> dict[str, Any]:
 def _put_account(event: dict[str, Any], account_id: str) -> dict[str, Any]:
     """Edit an account's mutable fields.
 
-    Body may carry any of name/assetClass/owners/excludedFromNetWorth/loanTerms/
-    notes/sortOrder. A field present with value null removes the optional attribute
-    (loanTerms/notes). `owners`, when present, is a non-empty list that replaces the
-    current owners. `accountType` and `liability` are immutable (the type drives
-    liability, the asset-class rules, and loan-term eligibility) and are ignored here.
+    Body may carry any of name/assetClasses/owners/excludedFromNetWorth/targetYear/
+    loanTerms/notes/sortOrder. A field present with value null removes the optional
+    attribute (loanTerms/notes). `owners` and `assetClasses`, when present, are
+    non-empty lists that replace the current values. `targetYear` is reconciled
+    against the effective asset-class set. `accountType` and `liability` are immutable
+    (the type drives liability, the asset-class rules, and loan-term eligibility) and
+    are ignored here.
     """
     body = _parse_json_body(event)
     if body is None:
         return _response(400, "Request body is required")
 
-    editable_fields = ("name", "assetClass", "owners", "excludedFromNetWorth", "loanTerms", "notes", "sortOrder")
+    editable_fields = (
+        "name",
+        "assetClasses",
+        "owners",
+        "excludedFromNetWorth",
+        "targetYear",
+        "loanTerms",
+        "notes",
+        "sortOrder",
+    )
     updates = {field: body[field] for field in editable_fields if field in body}
     if not updates:
         return _response(400, f"at least one editable field is required: {list(editable_fields)}")
@@ -1451,13 +1464,15 @@ def _get_networth_month(year_month: str, now: datetime) -> dict[str, Any]:
 
 
 def _post_networth_month(event: dict[str, Any], year_month: str, now: datetime) -> dict[str, Any]:
-    """Upsert a month's snapshot rows.
+    """Upsert a month's snapshot rows, per asset class.
 
-    Body: {rows: [{accountId, value: number | null, note?: string | null}]}. A
-    non-negative integer (millionths of a dollar) writes the row; null deletes it.
-    An optional per-row `note` string is stored with the value (month-specific;
-    never carried forward). Accounts omitted from `rows` are left untouched.
-    Unknown accountIds are rejected so orphan rows can't be created.
+    Body: {rows: [{accountId, note?: string | null,
+                   classes: [{assetClass, value: number | null}, ...]}]}. Per class, a
+    non-negative integer (millionths) writes that class's value; null clears just that
+    class; classes omitted from the list are left untouched (per-class merge). A `note`
+    key replaces/clears the account-month note; omitting it preserves the note.
+    Accounts omitted from `rows` are untouched. Unknown accountIds and asset-class
+    values are rejected.
     """
     err = _reject_future_or_malformed_month(year_month, now)
     if err:
@@ -1470,35 +1485,61 @@ def _post_networth_month(event: dict[str, Any], year_month: str, now: datetime) 
     if not isinstance(rows, list):
         return _response(400, "rows array is required")
 
-    known_account_ids = {a["accountId"] for a in _ACCOUNT_TABLE.list_all()}
+    accounts_by_id = {a["accountId"]: a for a in _ACCOUNT_TABLE.list_all()}
     unknown: list[str] = []
+    upsert_rows: list[dict[str, Any]] = []
     for row in rows:
-        if not isinstance(row, dict) or "accountId" not in row or "value" not in row:
-            return _response(400, "each row must have accountId and value (value may be null)")
+        if not isinstance(row, dict) or "accountId" not in row or "classes" not in row:
+            return _response(400, "each row must have accountId and classes")
         account_id = row["accountId"]
-        if account_id not in known_account_ids:
+        if account_id not in accounts_by_id:
             unknown.append(account_id)
             continue
+
         note = row.get("note")
         if note is not None and not isinstance(note, str):
             return _response(400, f"note for account {account_id} must be a string or null")
         if isinstance(note, str) and len(note) > 1000:
             return _response(400, f"note for account {account_id} must be 1000 characters or fewer")
-        value = row["value"]
-        if value is None:
-            continue
-        if isinstance(value, bool) or not isinstance(value, int):
-            return _response(400, f"value for account {account_id} must be an integer or null")
-        if value < 0:
-            return _response(400, f"value for account {account_id} must be >= 0")
+
+        class_list = row["classes"]
+        if not isinstance(class_list, list):
+            return _response(400, f"classes for account {account_id} must be a list")
+        classes: dict[str, Any] = {}
+        for entry in class_list:
+            if not isinstance(entry, dict) or "assetClass" not in entry or "value" not in entry:
+                return _response(400, f"each class entry for account {account_id} must have assetClass and value")
+            asset_class = entry["assetClass"]
+            try:
+                validate_asset_class(asset_class)
+            except ValueError as e:
+                return _response(400, str(e))
+            value = entry["value"]
+            if value is None:
+                classes[asset_class] = None  # clear this class
+                continue
+            if isinstance(value, bool) or not isinstance(value, int):
+                return _response(400, f"value for {account_id}/{asset_class} must be an integer or null")
+            if value < 0:
+                return _response(400, f"value for {account_id}/{asset_class} must be >= 0")
+            classes[asset_class] = value
+
+        upsert_row: dict[str, Any] = {"accountId": account_id, "classes": classes}
+        if "note" in row:
+            upsert_row["note"] = note
+        upsert_rows.append(upsert_row)
     if unknown:
         return _json_response(
             400,
             json.dumps({"error": "unknown accountId(s) in rows", "unknownAccountIds": sorted(set(unknown))}),
         )
 
-    saved = _NETWORTH_SNAPSHOT_TABLE.upsert_month(year_month, rows)
-    return _json_response(200, json.dumps({"yearMonth": year_month, "rows": saved}, default=_json_default))
+    _NETWORTH_SNAPSHOT_TABLE.upsert_month(year_month, upsert_rows)
+    # Return the same per-class shape as GET so the client sees a consistent view.
+    month_rows = _NETWORTH_SNAPSHOT_TABLE.get_month(year_month)
+    prefill = compute_prefill(_NETWORTH_SNAPSHOT_TABLE.scan_all(), year_month)
+    view = build_month_view(list(accounts_by_id.values()), month_rows, prefill)
+    return _json_response(200, json.dumps({"yearMonth": year_month, "rows": view}, default=_json_default))
 
 
 def _get_networth_history() -> dict[str, Any]:

@@ -16,55 +16,77 @@ from __future__ import annotations
 from typing import Any
 
 
-def compute_prefill(all_rows: list[dict[str, Any]], year_month: str) -> dict[str, dict[str, Any]]:
-    """Most recent recorded value strictly BEFORE `year_month`, per account.
+def row_total(row: dict[str, Any]) -> Any:
+    """Account total for a snapshot row = sum of its per-class `byAssetClass` values.
 
-    Returns {accountId: {"value": <value>, "fromYearMonth": <ym>}}. This powers the
-    entry grid's "carried from 2026-06" prefill. Only months earlier than the target
-    are considered — the current month's own recorded value is the actual value, not
-    a prefill.
+    Sums preserve the incoming numeric type (Decimal in prod, int in tests). An
+    empty/absent map totals to 0.
     """
-    best: dict[str, dict[str, Any]] = {}
+    return sum((row.get("byAssetClass") or {}).values(), 0)
+
+
+def compute_prefill(all_rows: list[dict[str, Any]], year_month: str) -> dict[str, dict[str, dict[str, Any]]]:
+    """Most recent recorded value strictly BEFORE `year_month`, per (account, class).
+
+    Returns {accountId: {assetClass: {"value": <v>, "fromYearMonth": <ym>}}}. This
+    powers the entry grid's per-class "carried from 2026-06" prefill. Only months
+    earlier than the target are considered. Legacy scalar rows (no `byAssetClass`)
+    can't be attributed to a class and are skipped — after the Chunk 2 migration
+    there are none.
+    """
+    best: dict[str, dict[str, dict[str, Any]]] = {}
     for row in all_rows:
         row_ym = row["yearMonth"]
         if row_ym >= year_month:
             continue
         account_id = row["accountId"]
-        current = best.get(account_id)
-        if current is None or row_ym > current["fromYearMonth"]:
-            best[account_id] = {"value": row["value"], "fromYearMonth": row_ym}
-    return best
+        by_class = row.get("byAssetClass") or {}
+        acct = best.setdefault(account_id, {})
+        for cls, value in by_class.items():
+            current = acct.get(cls)
+            if current is None or row_ym > current["fromYearMonth"]:
+                acct[cls] = {"value": value, "fromYearMonth": row_ym}
+    return {aid: classes for aid, classes in best.items() if classes}
 
 
 def build_month_view(
     accounts: list[dict[str, Any]],
     month_rows: list[dict[str, Any]],
-    prefill: dict[str, dict[str, Any]],
+    prefill: dict[str, dict[str, dict[str, Any]]],
 ) -> list[dict[str, Any]]:
-    """Shape the GET /networth/{YYYY-MM} rows.
+    """Shape the GET /networth/{YYYY-MM} rows — one entry per account, per class.
 
-    Membership (design §5): every active account, plus any inactive account that has
-    a recorded value THIS month (so a closed account's historical entry stays
-    visible/editable). Rows come back in `accounts` order (already sorted by
-    sortOrder). Each row: {accountId, value | null, prefill | null, note | null}.
-    Notes are month-specific and never carried forward, so there is no note prefill.
+    Membership: every active account, plus any inactive account that has a recorded
+    value THIS month. For each account, the classes shown are its active
+    `assetClasses` UNION any class with a recorded value this month (so a class you
+    stopped tracking still appears — with its value — in months where it has data,
+    and stays editable). Each row:
+        {accountId, note | null,
+         classes: [{assetClass, value | null, prefill | null}, ...]}
+    Notes are per (account, month) and never carried forward.
     """
-    month_values = {r["accountId"]: r["value"] for r in month_rows}
+    month_by_account = {r["accountId"]: (r.get("byAssetClass") or {}) for r in month_rows}
     month_notes = {r["accountId"]: r["note"] for r in month_rows if r.get("note")}
     rows: list[dict[str, Any]] = []
     for account in accounts:
         account_id = account["accountId"]
-        has_value_this_month = account_id in month_values
-        if not account.get("active", False) and not has_value_this_month:
+        this_month = month_by_account.get(account_id, {})
+        if not account.get("active", False) and not this_month:
             continue
-        rows.append(
-            {
-                "accountId": account_id,
-                "value": month_values.get(account_id),
-                "prefill": prefill.get(account_id),
-                "note": month_notes.get(account_id),
-            }
-        )
+
+        # Active classes first (in their stored order), then any valued-this-month
+        # class not already listed.
+        classes_to_show: list[str] = list(account.get("assetClasses", []))
+        for cls in this_month:
+            if cls not in classes_to_show:
+                classes_to_show.append(cls)
+
+        acct_prefill = prefill.get(account_id, {})
+        class_entries = [
+            {"assetClass": cls, "value": this_month.get(cls), "prefill": acct_prefill.get(cls)}
+            for cls in classes_to_show
+        ]
+        rows.append({"accountId": account_id, "note": month_notes.get(account_id), "classes": class_entries})
     return rows
 
 
@@ -97,7 +119,7 @@ def build_history(accounts: list[dict[str, Any]], all_rows: list[dict[str, Any]]
     for row in all_rows:
         year_month = row["yearMonth"]
         months.add(year_month)
-        values.setdefault(year_month, {})[row["accountId"]] = row["value"]
+        values.setdefault(year_month, {})[row["accountId"]] = row_total(row)
         if row.get("note"):
             notes.setdefault(year_month, {})[row["accountId"]] = row["note"]
 

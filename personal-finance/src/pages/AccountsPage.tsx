@@ -26,6 +26,7 @@ import {
     ACCOUNT_TYPES,
     ASSET_CLASS_LABELS,
     ASSET_CLASSES,
+    TARGET_YEAR_VINTAGES,
     type Account,
     type AccountCreate,
     type AccountUpdate,
@@ -41,7 +42,8 @@ import {
 interface AccountFormState {
     name: string;
     accountType: string;
-    assetClass: string; // meaningful only for "choose" types; auto-set for fixed ones
+    assetClasses: string[]; // the set the account holds (choose types); auto-forced for fixed types
+    targetYear: number | null; // required iff assetClasses includes "target_date"
     owners: string[]; // personIds; at least one required at submit
     excludedFromNetWorth: boolean;
     notes: string;
@@ -52,10 +54,12 @@ interface AccountFormState {
 
 function emptyForm(): AccountFormState {
     const t = ACCOUNT_TYPES[0]; // "checking"
+    const fixed = ACCOUNT_TYPE_META[t].fixedAssetClass;
     return {
         name: "",
         accountType: t,
-        assetClass: ACCOUNT_TYPE_META[t].fixedAssetClass ?? ASSET_CLASSES[0],
+        assetClasses: fixed ? [fixed] : [],
+        targetYear: null,
         owners: [],
         excludedFromNetWorth: false,
         notes: "",
@@ -70,7 +74,8 @@ function formFromAccount(account: Account): AccountFormState {
     return {
         name: account.name,
         accountType: account.accountType,
-        assetClass: account.assetClass,
+        assetClasses: [...account.assetClasses],
+        targetYear: account.targetYear ?? null,
         owners: [...account.owners],
         excludedFromNetWorth: account.excludedFromNetWorth,
         notes: account.notes ?? "",
@@ -214,18 +219,37 @@ export default function AccountsPage() {
         window.scrollTo({ top: 0, behavior: "smooth" });
     };
 
-    // Changing the type re-derives dependent fields: force a fixed asset class and
-    // drop any loan-term entries the new type doesn't allow.
+    // Changing the type re-derives dependent fields: force the fixed asset class,
+    // clear a now-irrelevant target year, and drop loan-term entries the new type
+    // doesn't allow.
     const changeAccountType = (accountType: string) => {
         const m = ACCOUNT_TYPE_META[accountType];
-        setForm((f) => ({
-            ...f,
-            accountType,
-            assetClass: m.fixedAssetClass ?? f.assetClass,
-            loanRatePct: m.amortizing ? f.loanRatePct : "",
-            loanPayment: m.amortizing ? f.loanPayment : "",
-            loanPayoff: m.amortizing ? f.loanPayoff : "",
-        }));
+        setForm((f) => {
+            const assetClasses = m.fixedAssetClass ? [m.fixedAssetClass] : f.assetClasses;
+            return {
+                ...f,
+                accountType,
+                assetClasses,
+                targetYear: assetClasses.includes("target_date") ? f.targetYear : null,
+                loanRatePct: m.amortizing ? f.loanRatePct : "",
+                loanPayment: m.amortizing ? f.loanPayment : "",
+                loanPayoff: m.amortizing ? f.loanPayoff : "",
+            };
+        });
+    };
+
+    const toggleAssetClass = (assetClass: string, checked: boolean) => {
+        setForm((f) => {
+            const assetClasses = checked
+                ? [...f.assetClasses, assetClass]
+                : f.assetClasses.filter((c) => c !== assetClass);
+            return {
+                ...f,
+                assetClasses,
+                // Clear the target year when Target Date is unchecked.
+                targetYear: assetClasses.includes("target_date") ? f.targetYear : null,
+            };
+        });
     };
 
     const toggleOwner = (personId: string, checked: boolean) => {
@@ -245,6 +269,16 @@ export default function AccountsPage() {
             showError("Select at least one owner");
             return;
         }
+        // Asset class is user-chosen only for "choose" types (not fixed, not a liability).
+        const assetClassEditable = !meta.liability && meta.fixedAssetClass === null;
+        if (assetClassEditable && form.assetClasses.length === 0) {
+            showError("Select at least one asset class");
+            return;
+        }
+        if (form.assetClasses.includes("target_date") && form.targetYear === null) {
+            showError("Pick a target year for the Target Date allocation");
+            return;
+        }
         let loanTerms: LoanTerms | null;
         try {
             loanTerms = buildLoanTerms(form, meta.amortizing);
@@ -253,33 +287,36 @@ export default function AccountsPage() {
             return;
         }
 
-        // Asset class is only user-editable for "choose" types (not fixed, not a liability).
-        const assetClassEditable = !meta.liability && meta.fixedAssetClass === null;
+        // Only send a targetYear when target_date is among the classes; otherwise the
+        // server rejects it (and clears any stale one on update).
+        const targetYear = form.assetClasses.includes("target_date") ? form.targetYear : null;
 
         try {
             if (editingId === null) {
                 const data: AccountCreate = {
                     name,
                     accountType: form.accountType,
-                    assetClass: form.assetClass,
+                    assetClasses: form.assetClasses,
                     owners: form.owners,
                     excludedFromNetWorth: form.excludedFromNetWorth,
                 };
+                if (targetYear !== null) data.targetYear = targetYear;
                 if (loanTerms) data.loanTerms = loanTerms;
                 if (form.notes.trim()) data.notes = form.notes.trim();
                 await createAccount(data);
                 showSuccess(`Created "${name}"`);
             } else {
                 // accountType/liability are immutable, so they're never sent. Asset
-                // class is sent only when the type lets the user choose it.
+                // classes are sent only when the type lets the user choose them.
                 const updates: AccountUpdate = {
                     name,
                     owners: form.owners,
                     excludedFromNetWorth: form.excludedFromNetWorth,
+                    targetYear,
                     loanTerms,
                     notes: form.notes.trim() ? form.notes.trim() : null,
                 };
-                if (assetClassEditable) updates.assetClass = form.assetClass;
+                if (assetClassEditable) updates.assetClasses = form.assetClasses;
                 await updateAccount(editingId, updates);
                 showSuccess(`Saved "${name}"`);
             }
@@ -393,8 +430,19 @@ export default function AccountsPage() {
                     )}
                 </td>
                 <td>{ACCOUNT_TYPE_LABELS[account.accountType] ?? account.accountType}</td>
-                {/* Asset class is meaningless for liabilities. */}
-                <td>{account.liability ? "—" : (ASSET_CLASS_LABELS[account.assetClass] ?? account.assetClass)}</td>
+                {/* Asset class is meaningless for liabilities. Target Date shows its vintage. */}
+                <td>
+                    {account.liability
+                        ? "—"
+                        : account.assetClasses
+                              .map((c) => {
+                                  const label = ASSET_CLASS_LABELS[c] ?? c;
+                                  return c === "target_date" && account.targetYear
+                                      ? `${label} (${account.targetYear})`
+                                      : label;
+                              })
+                              .join(", ")}
+                </td>
                 <td>{ownersLabel(account.owners)}</td>
                 <td>
                     {account.liability ? (
@@ -469,28 +517,56 @@ export default function AccountsPage() {
                         <span className="readonly-field">{meta.liability ? "Liability" : "Asset"}</span>
                     </div>
 
-                    {/* Asset class: hidden for liabilities, read-only when fixed, a dropdown when chosen. */}
+                    {/* Asset classes: hidden for liabilities, read-only when fixed, a
+                        multi-select when chosen. Picking Target Date reveals a vintage
+                        year dropdown. */}
                     {!meta.liability &&
                         (assetClassEditable ? (
-                            <div className="form-field">
-                                <label htmlFor="acct-class">Asset class</label>
-                                <select
-                                    id="acct-class"
-                                    value={form.assetClass}
-                                    onChange={(e) => setForm({ ...form, assetClass: e.target.value })}
-                                >
-                                    {ASSET_CLASSES.map((c) => (
-                                        <option key={c} value={c}>
-                                            {ASSET_CLASS_LABELS[c]}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
+                            <>
+                                <div className="form-field">
+                                    <label>Asset class(es)</label>
+                                    <div className="owners-checkboxes">
+                                        {ASSET_CLASSES.map((c) => (
+                                            <label key={c}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={form.assetClasses.includes(c)}
+                                                    onChange={(e) => toggleAssetClass(c, e.target.checked)}
+                                                />
+                                                {ASSET_CLASS_LABELS[c] ?? c}
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                                {form.assetClasses.includes("target_date") && (
+                                    <div className="form-field">
+                                        <label htmlFor="acct-target-year">Target year</label>
+                                        <select
+                                            id="acct-target-year"
+                                            value={form.targetYear ?? ""}
+                                            onChange={(e) =>
+                                                setForm({
+                                                    ...form,
+                                                    targetYear: e.target.value ? Number(e.target.value) : null,
+                                                })
+                                            }
+                                        >
+                                            <option value="">Select year…</option>
+                                            {TARGET_YEAR_VINTAGES.map((y) => (
+                                                <option key={y} value={y}>
+                                                    {y}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+                            </>
                         ) : (
                             <div className="form-field">
                                 <label>Asset class</label>
                                 <span className="readonly-field">
-                                    {ASSET_CLASS_LABELS[form.assetClass] ?? form.assetClass}{" "}
+                                    {(form.assetClasses[0] && ASSET_CLASS_LABELS[form.assetClasses[0]]) ??
+                                        form.assetClasses[0]}{" "}
                                     <span className="hint">(fixed for this type)</span>
                                 </span>
                             </div>

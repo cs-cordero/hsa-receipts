@@ -1674,7 +1674,7 @@ class TestPostAccount:
                 body={
                     "name": "Chase Checking",
                     "accountType": "checking",
-                    "assetClass": "cash",
+                    "assetClasses": ["cash"],
                     "owners": ["p1"],
                 },
             ),
@@ -1684,6 +1684,7 @@ class TestPostAccount:
         _, kwargs = mock_at.create.call_args
         assert kwargs["name"] == "Chase Checking"
         assert kwargs["account_type"] == "checking"
+        assert kwargs["asset_classes"] == ["cash"]
         assert kwargs["owners"] == ["p1"]
         # liability is derived server-side, never passed from the handler.
         assert "liability" not in kwargs
@@ -1702,7 +1703,7 @@ class TestPostAccount:
                 body={
                     "name": "529",
                     "accountType": "529",
-                    "assetClass": "us_equity",
+                    "assetClasses": ["us_equity_large_cap"],
                     "owners": ["p1"],
                     "excludedFromNetWorth": True,
                 },
@@ -1726,7 +1727,7 @@ class TestPostAccount:
                 body={
                     "name": "Joint Checking",
                     "accountType": "checking",
-                    "assetClass": "cash",
+                    "assetClasses": ["cash"],
                     "owners": ["p1", "p2"],
                 },
             ),
@@ -1746,7 +1747,7 @@ class TestPostAccount:
                 body={
                     "name": "Ghost",
                     "accountType": "checking",
-                    "assetClass": "cash",
+                    "assetClasses": ["cash"],
                     "owners": ["ghost"],
                 },
             ),
@@ -1759,7 +1760,7 @@ class TestPostAccount:
             _make_event(
                 "POST",
                 "/api/accounts",
-                body={"name": "X", "accountType": "checking", "assetClass": "cash"},
+                body={"name": "X", "accountType": "checking", "assetClasses": ["cash"]},
             ),
             None,
         )
@@ -1793,7 +1794,7 @@ class TestPostAccount:
                 body={
                     "name": "X",
                     "accountType": "brokerage",
-                    "assetClass": "stocks",
+                    "assetClasses": ["stocks"],
                     "owners": ["p1"],
                 },
             ),
@@ -1902,19 +1903,25 @@ class TestAccountLifecycle:
 # 2026-07 is the future (rejected).
 
 
+def _acct(account_id: str, asset_classes: list[str]) -> dict[str, object]:
+    return {"accountId": account_id, "name": account_id, "active": True, "sortOrder": 0, "assetClasses": asset_classes}
+
+
 class TestGetNetWorthMonth:
     @patch("corderohq.personal_finance_handler._NETWORTH_SNAPSHOT_TABLE")
     @patch("corderohq.personal_finance_handler._ACCOUNT_TABLE")
-    def test_returns_rows_with_prefill(self, mock_at: MagicMock, mock_st: MagicMock) -> None:
-        mock_at.list_all.return_value = [{"accountId": "a1", "name": "Checking", "active": True, "sortOrder": 0}]
+    def test_returns_per_class_rows_with_prefill(self, mock_at: MagicMock, mock_st: MagicMock) -> None:
+        mock_at.list_all.return_value = [_acct("a1", ["cash"])]
         mock_st.get_month.return_value = []
-        mock_st.scan_all.return_value = [{"yearMonth": "2026-05", "accountId": "a1", "value": 100}]
+        mock_st.scan_all.return_value = [{"yearMonth": "2026-05", "accountId": "a1", "byAssetClass": {"cash": 100}}]
         result = handler(_make_event("GET", "/api/net-worth/2026-06"), None)
         assert result["statusCode"] == 200
         body = json.loads(result["body"])
         assert body["yearMonth"] == "2026-06"
-        assert body["rows"][0]["prefill"] == {"value": 100, "fromYearMonth": "2026-05"}
-        assert body["rows"][0]["value"] is None
+        cash = body["rows"][0]["classes"][0]
+        assert cash["assetClass"] == "cash"
+        assert cash["value"] is None
+        assert cash["prefill"] == {"value": 100, "fromYearMonth": "2026-05"}
 
     def test_future_month_rejected(self) -> None:
         result = handler(_make_event("GET", "/api/net-worth/2026-07"), None)
@@ -1928,59 +1935,92 @@ class TestGetNetWorthMonth:
 class TestPostNetWorthMonth:
     @patch("corderohq.personal_finance_handler._NETWORTH_SNAPSHOT_TABLE")
     @patch("corderohq.personal_finance_handler._ACCOUNT_TABLE")
-    def test_upserts_rows(self, mock_at: MagicMock, mock_st: MagicMock) -> None:
-        mock_at.list_all.return_value = [{"accountId": "a1"}, {"accountId": "a2"}]
-        mock_st.upsert_month.return_value = [{"yearMonth": "2026-06", "accountId": "a1", "value": 500}]
-        rows = [{"accountId": "a1", "value": 500}, {"accountId": "a2", "value": None}]
+    def test_upserts_per_class_merge_rows(self, mock_at: MagicMock, mock_st: MagicMock) -> None:
+        mock_at.list_all.return_value = [_acct("a1", ["us_equity_large_cap", "cash"]), _acct("a2", ["bonds"])]
+        mock_st.get_month.return_value = []
+        mock_st.scan_all.return_value = []
+        rows = [
+            {
+                "accountId": "a1",
+                "classes": [
+                    {"assetClass": "us_equity_large_cap", "value": 500},
+                    {"assetClass": "cash", "value": None},  # clear
+                ],
+            },
+            {"accountId": "a2", "classes": [{"assetClass": "bonds", "value": 400}]},
+        ]
         result = handler(_make_event("POST", "/api/net-worth/2026-06", body={"rows": rows}), None)
         assert result["statusCode"] == 200
-        mock_st.upsert_month.assert_called_once_with("2026-06", rows)
+        mock_st.upsert_month.assert_called_once_with(
+            "2026-06",
+            [
+                {"accountId": "a1", "classes": {"us_equity_large_cap": 500, "cash": None}},
+                {"accountId": "a2", "classes": {"bonds": 400}},
+            ],
+        )
 
     @patch("corderohq.personal_finance_handler._ACCOUNT_TABLE")
     def test_unknown_account_rejected(self, mock_at: MagicMock) -> None:
-        mock_at.list_all.return_value = [{"accountId": "a1"}]
+        mock_at.list_all.return_value = [_acct("a1", ["cash"])]
         result = handler(
-            _make_event("POST", "/api/net-worth/2026-06", body={"rows": [{"accountId": "ghost", "value": 1}]}),
+            _make_event(
+                "POST",
+                "/api/net-worth/2026-06",
+                body={"rows": [{"accountId": "ghost", "classes": [{"assetClass": "cash", "value": 1}]}]},
+            ),
             None,
         )
         assert result["statusCode"] == 400
-        body = json.loads(result["body"])
-        assert body["unknownAccountIds"] == ["ghost"]
+        assert json.loads(result["body"])["unknownAccountIds"] == ["ghost"]
 
     @patch("corderohq.personal_finance_handler._NETWORTH_SNAPSHOT_TABLE")
     @patch("corderohq.personal_finance_handler._ACCOUNT_TABLE")
-    def test_row_note_passed_through(self, mock_at: MagicMock, mock_st: MagicMock) -> None:
-        mock_at.list_all.return_value = [{"accountId": "a1"}]
-        mock_st.upsert_month.return_value = []
-        rows = [{"accountId": "a1", "value": 500, "note": "quarterly bonus"}]
+    def test_note_passed_through(self, mock_at: MagicMock, mock_st: MagicMock) -> None:
+        mock_at.list_all.return_value = [_acct("a1", ["cash"])]
+        mock_st.get_month.return_value = []
+        mock_st.scan_all.return_value = []
+        rows = [{"accountId": "a1", "note": "quarterly bonus", "classes": [{"assetClass": "cash", "value": 500}]}]
         result = handler(_make_event("POST", "/api/net-worth/2026-06", body={"rows": rows}), None)
         assert result["statusCode"] == 200
-        # The row (note included) is handed to the table wrapper verbatim.
-        mock_st.upsert_month.assert_called_once_with("2026-06", rows)
+        mock_st.upsert_month.assert_called_once_with(
+            "2026-06", [{"accountId": "a1", "classes": {"cash": 500}, "note": "quarterly bonus"}]
+        )
 
     @patch("corderohq.personal_finance_handler._ACCOUNT_TABLE")
-    def test_non_string_note_rejected(self, mock_at: MagicMock) -> None:
-        mock_at.list_all.return_value = [{"accountId": "a1"}]
+    def test_invalid_asset_class_rejected(self, mock_at: MagicMock) -> None:
+        mock_at.list_all.return_value = [_acct("a1", ["cash"])]
         result = handler(
-            _make_event("POST", "/api/net-worth/2026-06", body={"rows": [{"accountId": "a1", "value": 1, "note": 5}]}),
+            _make_event(
+                "POST",
+                "/api/net-worth/2026-06",
+                body={"rows": [{"accountId": "a1", "classes": [{"assetClass": "stonks", "value": 1}]}]},
+            ),
             None,
         )
         assert result["statusCode"] == 400
 
     @patch("corderohq.personal_finance_handler._ACCOUNT_TABLE")
     def test_negative_value_rejected(self, mock_at: MagicMock) -> None:
-        mock_at.list_all.return_value = [{"accountId": "a1"}]
+        mock_at.list_all.return_value = [_acct("a1", ["cash"])]
         result = handler(
-            _make_event("POST", "/api/net-worth/2026-06", body={"rows": [{"accountId": "a1", "value": -5}]}),
+            _make_event(
+                "POST",
+                "/api/net-worth/2026-06",
+                body={"rows": [{"accountId": "a1", "classes": [{"assetClass": "cash", "value": -5}]}]},
+            ),
             None,
         )
         assert result["statusCode"] == 400
 
     @patch("corderohq.personal_finance_handler._ACCOUNT_TABLE")
     def test_non_integer_value_rejected(self, mock_at: MagicMock) -> None:
-        mock_at.list_all.return_value = [{"accountId": "a1"}]
+        mock_at.list_all.return_value = [_acct("a1", ["cash"])]
         result = handler(
-            _make_event("POST", "/api/net-worth/2026-06", body={"rows": [{"accountId": "a1", "value": 5.5}]}),
+            _make_event(
+                "POST",
+                "/api/net-worth/2026-06",
+                body={"rows": [{"accountId": "a1", "classes": [{"assetClass": "cash", "value": 5.5}]}]},
+            ),
             None,
         )
         assert result["statusCode"] == 400
@@ -1990,10 +2030,7 @@ class TestPostNetWorthMonth:
         assert result["statusCode"] == 400
 
     def test_future_month_rejected(self) -> None:
-        result = handler(
-            _make_event("POST", "/api/net-worth/2026-07", body={"rows": []}),
-            None,
-        )
+        result = handler(_make_event("POST", "/api/net-worth/2026-07", body={"rows": []}), None)
         assert result["statusCode"] == 400
 
 
@@ -2004,7 +2041,9 @@ class TestGetNetWorthHistory:
         mock_at.list_all.return_value = [
             {"accountId": "a1", "name": "Checking", "active": True, "liability": False, "sortOrder": 0},
         ]
-        mock_st.scan_all.return_value = [{"yearMonth": "2026-05", "accountId": "a1", "value": 1000}]
+        mock_st.scan_all.return_value = [
+            {"yearMonth": "2026-05", "accountId": "a1", "byAssetClass": {"cash": 1000}}
+        ]
         result = handler(_make_event("GET", "/api/net-worth/history"), None)
         assert result["statusCode"] == 200
         body = json.loads(result["body"])

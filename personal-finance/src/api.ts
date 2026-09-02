@@ -214,7 +214,11 @@ export const fetchNetWorthMonth = (yearMonth: string) => request(`/net-worth/${y
 export const fetchNetWorthHistory = () => request("/net-worth/history", parseNetWorthHistory);
 export const saveNetWorthMonth = (
     yearMonth: string,
-    rows: { accountId: string; value: number | null; note?: string }[],
+    rows: {
+        accountId: string;
+        note?: string | null;
+        classes: { assetClass: string; value: number | null }[];
+    }[],
 ) => request(`/net-worth/${yearMonth}`, parseNetWorthMonth, { method: "POST", ...jsonBody({ rows }) });
 
 // Summary

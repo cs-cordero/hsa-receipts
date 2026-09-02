@@ -179,7 +179,7 @@ export interface Account {
     accountId: string;
     name: string;
     accountType: string; // one of ACCOUNT_TYPES; kept as string so unknown DB values don't crash the parser
-    assetClass: string; // one of ASSET_CLASSES
+    assetClasses: string[]; // one or more ASSET_CLASSES the account holds (fixed types force one)
     liability: boolean;
     active: boolean;
     sortOrder: number;
@@ -187,6 +187,8 @@ export interface Account {
     // Tracked but left out of the Total Assets / Liabilities / Net Worth sums
     // (e.g. a 529 or custodial account you follow but don't own).
     excludedFromNetWorth: boolean;
+    // Present iff `target_date` is one of the assetClasses (the fund's vintage year).
+    targetYear?: number;
     loanTerms?: LoanTerms;
     notes?: string;
     createdAt: string;
@@ -198,22 +200,24 @@ export interface Account {
 export interface AccountCreate {
     name: string;
     accountType: string;
-    assetClass: string; // for fixed-class types the server overrides this; send the fixed value anyway
+    assetClasses: string[]; // for fixed-class types the server overrides this; send the fixed set anyway
     owners: string[]; // required, non-empty
     excludedFromNetWorth?: boolean; // defaults to false server-side
+    targetYear?: number; // required iff assetClasses includes target_date
     loanTerms?: LoanTerms;
     notes?: string;
 }
 
 // Edit payload: every field optional. For the nullable extras, an explicit `null`
 // REMOVES the attribute server-side; omitting the key leaves it untouched.
-// `owners`, when present, is a non-empty list that replaces the current owners.
-// `accountType` and `liability` are immutable and are not editable here.
+// `owners` and `assetClasses`, when present, are non-empty lists that replace the
+// current values. `accountType` and `liability` are immutable and not editable here.
 export type AccountUpdate = Partial<{
     name: string;
-    assetClass: string;
+    assetClasses: string[];
     owners: string[];
     excludedFromNetWorth: boolean;
+    targetYear: number | null;
     loanTerms: LoanTerms | null;
     notes: string | null;
     sortOrder: number;
@@ -227,6 +231,7 @@ export const ACCOUNT_TYPES = [
     "savings",
     "brokerage",
     "401k",
+    "403b",
     "roth_ira",
     "traditional_ira",
     "hsa",
@@ -239,7 +244,22 @@ export const ACCOUNT_TYPES = [
     "other_liability",
 ] as const;
 
-export const ASSET_CLASSES = ["cash", "us_equity", "intl_equity", "bonds", "real_estate", "other"] as const;
+// Selectable asset classes for the account picker. Selecting `target_date` requires
+// a target year (see TARGET_YEAR_VINTAGES).
+export const ASSET_CLASSES = [
+    "cash",
+    "us_equity_large_cap",
+    "us_equity_small_cap",
+    "intl_equity",
+    "bonds",
+    "fixed_income",
+    "real_estate",
+    "target_date",
+    "other",
+] as const;
+
+// Target-date funds are sold in 5-year vintages; the account form offers these.
+export const TARGET_YEAR_VINTAGES = [2025, 2030, 2035, 2040, 2045, 2050, 2055, 2060, 2065, 2070] as const;
 
 // Type-driven behavior, mirroring lambda/src/corderohq/networth/models.py's
 // _ACCOUNT_TYPE_META. The account type is the "driver": it fixes liability, may
@@ -256,6 +276,7 @@ export const ACCOUNT_TYPE_META: Record<string, AccountTypeMeta> = {
     savings: { liability: false, fixedAssetClass: "cash", amortizing: false },
     brokerage: { liability: false, fixedAssetClass: null, amortizing: false },
     "401k": { liability: false, fixedAssetClass: null, amortizing: false },
+    "403b": { liability: false, fixedAssetClass: null, amortizing: false },
     roth_ira: { liability: false, fixedAssetClass: null, amortizing: false },
     traditional_ira: { liability: false, fixedAssetClass: null, amortizing: false },
     hsa: { liability: false, fixedAssetClass: null, amortizing: false },
@@ -273,6 +294,7 @@ export const ACCOUNT_TYPE_LABELS: Record<string, string> = {
     savings: "Savings",
     brokerage: "Brokerage",
     "401k": "401(k)",
+    "403b": "403(b)",
     roth_ira: "Roth IRA",
     traditional_ira: "Traditional IRA",
     hsa: "HSA",
@@ -287,10 +309,13 @@ export const ACCOUNT_TYPE_LABELS: Record<string, string> = {
 
 export const ASSET_CLASS_LABELS: Record<string, string> = {
     cash: "Cash",
-    us_equity: "US Equity",
-    intl_equity: "Intl Equity",
+    us_equity_large_cap: "US Equity Large Cap",
+    us_equity_small_cap: "US Equity Small Cap",
+    intl_equity: "International Equity",
     bonds: "Bonds",
+    fixed_income: "Fixed Income",
     real_estate: "Real Estate",
+    target_date: "Target Date",
     other: "Other",
 };
 
@@ -301,11 +326,17 @@ export interface NetWorthPrefill {
     fromYearMonth: string;
 }
 
-export interface NetWorthRow {
-    accountId: string;
+// One asset-class line within an account for a given month.
+export interface NetWorthClassEntry {
+    assetClass: string;
     value: number | null;
     prefill: NetWorthPrefill | null;
-    note: string | null; // month-specific; never carried forward (so no note prefill)
+}
+
+export interface NetWorthRow {
+    accountId: string;
+    note: string | null; // account-level, month-specific; never carried forward
+    classes: NetWorthClassEntry[]; // active classes ∪ any class with a value this month
 }
 
 export interface NetWorthMonth {

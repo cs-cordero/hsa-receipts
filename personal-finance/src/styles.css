@@ -630,10 +630,28 @@ textarea:focus {
     width: 100%;
 }
 .networth-grid .nw-col-account {
-    width: 58%;
+    width: 42%;
+}
+.networth-grid .nw-col-class {
+    width: 30%;
 }
 .networth-grid .nw-col-value {
-    width: 42%;
+    width: 28%;
+}
+/* Per-class label cell (muted; the account name carries the emphasis). */
+.nw-class-cell {
+    color: #475569;
+    font-size: 0.9rem;
+}
+/* Add-asset-class + per-account subtotal helper rows. */
+.nw-add-class-row td {
+    padding-top: 0.2rem;
+    padding-bottom: 0.4rem;
+}
+.nw-subtotal-row td {
+    font-size: 0.85rem;
+    color: #64748b;
+    border-bottom: 1px solid #e5e7eb;
 }
 /* The carried-from note now lives under the value input (right-aligned via the
    .num cell) instead of a trailing empty column, so the value reaches the edge. */
@@ -678,6 +696,17 @@ textarea:focus {
 .nw-excluded-badge {
     margin-left: 0.4rem;
     vertical-align: middle;
+}
+/* "Deactivated" badge — slate/gray, distinct from the amber Excluded badge. */
+.nw-deactivated-badge {
+    margin-left: 0.4rem;
+    vertical-align: middle;
+    background: #64748b;
+    color: #fff;
+}
+/* Second Save button at the bottom of a long record form. */
+.nw-bottom-save {
+    margin-top: 1rem;
 }
 /* History cell note indicator (hover shows the note text via title). */
 .nw-note-dot {

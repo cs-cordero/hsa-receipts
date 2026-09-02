@@ -7,11 +7,14 @@ from corderohq.networth.models import (
     AssetClass,
     account_type_meta,
     resolve_account_type_fields,
+    resolve_target_year,
     validate_account_type,
     validate_asset_class,
+    validate_asset_classes,
     validate_birth_year_month,
     validate_loan_terms,
     validate_owners,
+    validate_target_year,
 )
 
 
@@ -23,6 +26,7 @@ class TestEnumValues:
             "savings",
             "brokerage",
             "401k",
+            "403b",
             "roth_ira",
             "traditional_ira",
             "hsa",
@@ -39,10 +43,13 @@ class TestEnumValues:
         values = {c.value for c in AssetClass}
         assert values == {
             "cash",
-            "us_equity",
+            "us_equity_large_cap",
+            "us_equity_small_cap",
             "intl_equity",
             "bonds",
+            "fixed_income",
             "real_estate",
+            "target_date",
             "other",
         }
 
@@ -64,7 +71,7 @@ class TestValidateAccountType:
 
 class TestValidateAssetClass:
     def test_accepts_valid_value(self) -> None:
-        assert validate_asset_class("us_equity") == "us_equity"
+        assert validate_asset_class("us_equity_large_cap") == "us_equity_large_cap"
 
     @pytest.mark.parametrize("bad", ["Equity", "stocks", "", None, 1])
     def test_rejects_invalid_value(self, bad: object) -> None:
@@ -106,38 +113,82 @@ class TestAccountTypeMeta:
         assert account_type_meta("checking").amortizing is False
 
 
+class TestValidateAssetClasses:
+    def test_accepts_single(self) -> None:
+        assert validate_asset_classes(["us_equity_large_cap"]) == ["us_equity_large_cap"]
+
+    def test_accepts_multiple(self) -> None:
+        assert validate_asset_classes(["us_equity_large_cap", "cash"]) == ["us_equity_large_cap", "cash"]
+
+    def test_dedupes_preserving_order(self) -> None:
+        assert validate_asset_classes(["cash", "bonds", "cash"]) == ["cash", "bonds"]
+
+    @pytest.mark.parametrize("bad", [[], None, "cash", ["cash", "stonks"], [1]])
+    def test_rejects_bad_shape(self, bad: object) -> None:
+        with pytest.raises(ValueError, match=r"assetClasses|Invalid assetClass"):
+            validate_asset_classes(bad)
+
+
 class TestResolveAccountTypeFields:
     def test_derives_liability_and_forces_fixed_asset_class(self) -> None:
-        # Even if the client claims us_equity, a mortgage's asset class is forced.
-        account_type, liability, asset_class, loan_terms = resolve_account_type_fields("mortgage", "us_equity", None)
+        # Even if the client claims equities, a mortgage's asset class is forced.
+        account_type, liability, asset_classes, loan_terms = resolve_account_type_fields(
+            "mortgage", ["us_equity_large_cap"], None
+        )
         assert account_type == "mortgage"
         assert liability is True
-        assert asset_class == "other"
+        assert asset_classes == ["other"]
         assert loan_terms is None
 
-    def test_cash_type_ignores_client_asset_class(self) -> None:
-        _, liability, asset_class, _ = resolve_account_type_fields("checking", "us_equity", None)
+    def test_cash_type_ignores_client_asset_classes(self) -> None:
+        _, liability, asset_classes, _ = resolve_account_type_fields("checking", ["us_equity_large_cap"], None)
         assert liability is False
-        assert asset_class == "cash"
+        assert asset_classes == ["cash"]
 
-    def test_choose_type_validates_asset_class(self) -> None:
-        _, liability, asset_class, _ = resolve_account_type_fields("brokerage", "us_equity", None)
+    def test_choose_type_validates_and_keeps_the_set(self) -> None:
+        _, liability, asset_classes, _ = resolve_account_type_fields(
+            "brokerage", ["us_equity_large_cap", "intl_equity", "cash"], None
+        )
         assert liability is False
-        assert asset_class == "us_equity"
+        assert asset_classes == ["us_equity_large_cap", "intl_equity", "cash"]
 
     def test_choose_type_rejects_bad_asset_class(self) -> None:
         with pytest.raises(ValueError, match="Invalid assetClass"):
-            resolve_account_type_fields("brokerage", "stonks", None)
+            resolve_account_type_fields("brokerage", ["stonks"], None)
+
+    def test_choose_type_rejects_empty_set(self) -> None:
+        with pytest.raises(ValueError, match="assetClasses must be a non-empty list"):
+            resolve_account_type_fields("brokerage", [], None)
 
     def test_loan_terms_rejected_on_non_amortizing_type(self) -> None:
         terms = {"interestRate": 0.04, "monthlyPayment": 1, "payoffYearMonth": "2030-01"}
         with pytest.raises(ValueError, match="only allowed on amortizing"):
-            resolve_account_type_fields("brokerage", "us_equity", terms)
+            resolve_account_type_fields("brokerage", ["us_equity_large_cap"], terms)
 
     def test_loan_terms_allowed_on_amortizing_type(self) -> None:
         terms = {"interestRate": 0.04, "monthlyPayment": 1_000_000, "payoffYearMonth": "2030-01"}
         _, _, _, normalized = resolve_account_type_fields("other_liability", None, terms)
         assert normalized == terms
+
+
+class TestTargetYear:
+    def test_validate_accepts_plausible_year(self) -> None:
+        assert validate_target_year(2055) == 2055
+
+    @pytest.mark.parametrize("bad", [1980, 2200, "2055", 20.5, True, None])
+    def test_validate_rejects_bad(self, bad: object) -> None:
+        with pytest.raises(ValueError, match="targetYear"):
+            validate_target_year(bad)
+
+    def test_resolve_requires_year_with_target_date(self) -> None:
+        assert resolve_target_year(["target_date", "cash"], 2055) == 2055
+        with pytest.raises(ValueError, match="required"):
+            resolve_target_year(["target_date"], None)
+
+    def test_resolve_forbids_year_without_target_date(self) -> None:
+        assert resolve_target_year(["cash"], None) is None
+        with pytest.raises(ValueError, match="only allowed"):
+            resolve_target_year(["cash"], 2055)
 
 
 class TestValidateBirthYearMonth:

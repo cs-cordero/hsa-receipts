@@ -19,6 +19,7 @@ import type {
     HardDeleteResult,
     LoanTerms,
     NetWorthHistory,
+    NetWorthClassEntry,
     NetWorthMonth,
     NetWorthPrefill,
     NetWorthRow,
@@ -407,7 +408,7 @@ export function parseAccount(raw: unknown): Account {
         accountId: requireString(obj, "accountId", "Account"),
         name: requireString(obj, "name", "Account"),
         accountType: requireString(obj, "accountType", "Account"),
-        assetClass: requireString(obj, "assetClass", "Account"),
+        assetClasses: stringArray(obj.assetClasses, "Account.assetClasses"),
         liability: requireBoolean(obj, "liability", "Account"),
         active: requireBoolean(obj, "active", "Account"),
         sortOrder: requireNumber(obj, "sortOrder", "Account"),
@@ -423,6 +424,7 @@ export function parseAccount(raw: unknown): Account {
     // what was actually asserted), so tolerate their absence here.
     const notes = optionalString(obj, "notes", "Account");
     if (notes !== undefined) account.notes = notes;
+    if (typeof obj.targetYear === "number") account.targetYear = obj.targetYear;
     if (obj.loanTerms !== undefined) account.loanTerms = parseLoanTerms(obj.loanTerms);
     return account;
 }
@@ -440,22 +442,27 @@ function parseNetWorthPrefill(raw: unknown): NetWorthPrefill | null {
     };
 }
 
+function parseNullableValue(raw: unknown, label: string): number | null {
+    if (raw === null || raw === undefined) return null;
+    if (typeof raw === "number") return raw;
+    throw new Error(`${label} must be a number or null, got ${typeof raw}`);
+}
+
+function parseNetWorthClassEntry(raw: unknown): NetWorthClassEntry {
+    const obj = requireObject(raw, "NetWorthClassEntry");
+    return {
+        assetClass: requireString(obj, "assetClass", "NetWorthClassEntry"),
+        value: parseNullableValue(obj.value, "NetWorthClassEntry.value"),
+        prefill: parseNetWorthPrefill(obj.prefill),
+    };
+}
+
 function parseNetWorthRow(raw: unknown): NetWorthRow {
     const obj = requireObject(raw, "NetWorthRow");
-    const rawValue = obj.value;
-    let value: number | null;
-    if (rawValue === null || rawValue === undefined) {
-        value = null;
-    } else if (typeof rawValue === "number") {
-        value = rawValue;
-    } else {
-        throw new Error(`NetWorthRow.value must be a number or null, got ${typeof rawValue}`);
-    }
     return {
         accountId: requireString(obj, "accountId", "NetWorthRow"),
-        value,
-        prefill: parseNetWorthPrefill(obj.prefill),
         note: typeof obj.note === "string" ? obj.note : null,
+        classes: arrayOf(obj.classes, parseNetWorthClassEntry, "NetWorthRow.classes"),
     };
 }
 
