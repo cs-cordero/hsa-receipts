@@ -58,6 +58,72 @@ nav a.active {
     background: rgba(255, 255, 255, 0.1);
 }
 
+/* Top-bar group buttons (Budget / Net Worth) — styled like nav links; toggle the
+   sub-bar below without navigating. */
+.nav-group-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #94a3b8;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    transition: color 0.15s;
+}
+.nav-group-btn:hover {
+    color: #fff;
+}
+/* `active` = the current page belongs to this group; `open` = its sub-bar is showing. */
+.nav-group-btn.active {
+    color: #fff;
+}
+.nav-group-btn.open {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* Right cluster: Admin link, admin toggle, Sign Out — pinned to the far right. */
+.nav-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.nav-right .sign-out-btn {
+    margin-left: 0; /* the wrapper already right-aligns the cluster */
+}
+
+/* Second-level nav: a lighter bar of the same hue, shown under the top bar. */
+.subnav {
+    background: #2a2a48;
+    padding: 0 1.5rem;
+}
+.subnav-inner {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    height: 2.75rem;
+    max-width: 1200px;
+    margin: 0 auto;
+    width: 100%;
+}
+.subnav-inner a {
+    color: #cbd5e1;
+    text-decoration: none;
+    padding: 0.4rem 0.7rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    transition: color 0.15s;
+}
+.subnav-inner a:hover {
+    color: #fff;
+}
+.subnav-inner a.active {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.12);
+}
+
 .sign-out-btn {
     margin-left: auto;
     background: none;
