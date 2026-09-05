@@ -26,11 +26,11 @@ function createTestTemplate(): Template {
         handler: "index.handler",
         code: lambda.Code.fromInline("pass"),
     });
-    const hsaZone = new route53.HostedZone(helperStack, "HsaZone", {
-        zoneName: "hsa.corderohq.com",
+    const rootZone = new route53.HostedZone(helperStack, "RootZone", {
+        zoneName: "corderohq.com",
     });
-    const hsaCertificate = new acm.Certificate(helperStack, "HsaCert", {
-        domainName: "hsa.corderohq.com",
+    const certificate = new acm.Certificate(helperStack, "SharedCert", {
+        domainName: "corderohq.com",
     });
 
     const stack = new HsaWebStack(app, "TestHsaWebStack", {
@@ -40,8 +40,8 @@ function createTestTemplate(): Template {
         distribution,
         dataBucket: bucket,
         processorFunction: fn,
-        hsaZone,
-        hsaCertificate,
+        rootZone,
+        certificate,
     });
 
     return Template.fromStack(stack);

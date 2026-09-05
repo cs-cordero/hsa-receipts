@@ -12,11 +12,11 @@ function createTestTemplate(stage: "dev" | "prod"): Template {
 
     const helperStack = new cdk.Stack(app, "HelperStack", { env });
     const userPool = new cognito.UserPool(helperStack, "UserPool");
-    const personalFinanceZone = new route53.HostedZone(helperStack, "PersonalFinanceZone", {
-        zoneName: "finance.corderohq.com",
+    const rootZone = new route53.HostedZone(helperStack, "RootZone", {
+        zoneName: "corderohq.com",
     });
-    const personalFinanceCertificate = new acm.Certificate(helperStack, "PersonalFinanceCert", {
-        domainName: "finance.corderohq.com",
+    const certificate = new acm.Certificate(helperStack, "SharedCert", {
+        domainName: "corderohq.com",
     });
     const categoryGroupTable = new dynamodb.Table(helperStack, "CategoryGroupTable", {
         partitionKey: { name: "groupId", type: dynamodb.AttributeType.STRING },
@@ -52,8 +52,8 @@ function createTestTemplate(stage: "dev" | "prod"): Template {
         env,
         stage,
         userPool,
-        personalFinanceZone,
-        personalFinanceCertificate,
+        rootZone,
+        certificate,
         categoryGroupTable,
         categoryTable,
         budgetTable,

@@ -27,7 +27,7 @@ infra/lib/
 
 ## Infrastructure Overview
 
-The infrastructure is split into two CDK stacks that build on the shared `PlatformStack` (DNS, TLS, Cognito user pool).
+The infrastructure is split into two CDK stacks that build on `DnsStack` (the single `corderohq.com` hosted zone) and the shared `PlatformStack` (TLS certificate, Cognito user pool).
 
 ### PersonalFinanceDynamoDbStack
 
@@ -48,11 +48,13 @@ Routing `/oauth2/*` through CloudFront keeps Cognito on the same origin as the a
 ### How They Connect
 
 ```
-PlatformStack (DNS, TLS, shared Cognito User Pool)
+DnsStack (corderohq.com hosted zone)
     |
-    +-- PersonalFinanceDynamoDbStack (DynamoDB tables)
-    |       |
-    +-------+-- PersonalFinanceWebStack (Cognito client, Lambda, API Gateway, CloudFront)
+    +-- PlatformStack (shared TLS cert, shared Cognito User Pool)
+            |
+            +-- PersonalFinanceDynamoDbStack (DynamoDB tables)
+            |       |
+            +-------+-- PersonalFinanceWebStack (Cognito client, Lambda, API Gateway, CloudFront)
 ```
 
 ## Data Model (DynamoDB)

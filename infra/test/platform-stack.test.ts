@@ -1,4 +1,5 @@
 import * as cdk from "aws-cdk-lib";
+import * as route53 from "aws-cdk-lib/aws-route53";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import { PlatformStack } from "../lib/platform-stack";
 
@@ -7,9 +8,14 @@ describe("PlatformStack", () => {
 
     beforeAll(() => {
         const app = new cdk.App();
-        const stack = new PlatformStack(app, "TestPlatformStack", {
-            env: { account: "123456789012", region: "us-east-1" },
+        const env = { account: "123456789012", region: "us-east-1" };
+
+        const helperStack = new cdk.Stack(app, "HelperStack", { env });
+        const rootZone = new route53.HostedZone(helperStack, "RootZone", {
+            zoneName: "corderohq.com",
         });
+
+        const stack = new PlatformStack(app, "TestPlatformStack", { env, rootZone });
         template = Template.fromStack(stack);
     });
 
@@ -129,31 +135,25 @@ describe("PlatformStack", () => {
         });
     });
 
-    describe("Route 53 hosted zones", () => {
-        test("hsa.corderohq.com hosted zone exists", () => {
-            template.hasResourceProperties("AWS::Route53::HostedZone", {
-                Name: "hsa.corderohq.com.",
-            });
-        });
-
-        test("auth.corderohq.com hosted zone exists", () => {
-            template.hasResourceProperties("AWS::Route53::HostedZone", {
-                Name: "auth.corderohq.com.",
-            });
-        });
-    });
-
-    describe("ACM certificates", () => {
-        test("hsa.corderohq.com cert with wildcard SAN", () => {
+    describe("Shared ACM certificate", () => {
+        test("covers the apex plus one wildcard per nesting level", () => {
             template.hasResourceProperties("AWS::CertificateManager::Certificate", {
-                DomainName: "hsa.corderohq.com",
-                SubjectAlternativeNames: ["*.hsa.corderohq.com"],
+                DomainName: "corderohq.com",
+                SubjectAlternativeNames: [
+                    "*.corderohq.com",
+                    "auth.corderohq.com",
+                    "*.hsa.corderohq.com",
+                    "*.finance.corderohq.com",
+                ],
             });
         });
 
-        test("auth.corderohq.com cert exists", () => {
+        test("validates against the root zone", () => {
             template.hasResourceProperties("AWS::CertificateManager::Certificate", {
-                DomainName: "auth.corderohq.com",
+                DomainName: "corderohq.com",
+                DomainValidationOptions: Match.arrayWith([
+                    Match.objectLike({ DomainName: "corderohq.com" }),
+                ]),
             });
         });
     });
@@ -191,6 +191,20 @@ describe("PlatformStack", () => {
                 Name: "auth.corderohq.com.",
                 Type: "A",
             });
+        });
+
+        // Cognito will not create a custom domain unless the parent domain resolves.
+        test("apex A record exists, satisfying Cognito's parent-domain requirement", () => {
+            template.hasResourceProperties("AWS::Route53::RecordSet", {
+                Name: "corderohq.com.",
+                Type: "A",
+            });
+        });
+
+        test("every record lands in the root zone", () => {
+            const records = template.findResources("AWS::Route53::RecordSet");
+            const zoneIds = Object.values(records).map((r) => JSON.stringify(r.Properties.HostedZoneId));
+            expect(new Set(zoneIds).size).toBe(1);
         });
     });
 });

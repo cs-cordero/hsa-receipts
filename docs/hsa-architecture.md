@@ -48,11 +48,13 @@ The web application layer. Creates a Cognito app client, an API Gateway HTTP API
 ### How They Connect
 
 ```
-PlatformStack (DNS, TLS, Cognito, CloudFront, S3 assets)
+DnsStack (corderohq.com hosted zone — the single zone for every app)
     |
-    +-- HsaReceiptArchiverStack (SES, receipt processing Lambda, data S3 bucket)
-    |       |
-    +-------+-- HsaWebStack (API Gateway, web Lambda, static site deployment)
+    +-- PlatformStack (shared TLS cert, Cognito, CloudFront, S3 assets)
+            |
+            +-- HsaReceiptArchiverStack (SES, receipt processing Lambda, data S3 bucket)
+            |       |
+            +-------+-- HsaWebStack (API Gateway, web Lambda, static site deployment)
 ```
 
 The web stack depends on both other stacks: it uses the platform's auth and hosting infrastructure, and it invokes the receipt processor Lambda and reads/writes the data bucket from the receipt stack.

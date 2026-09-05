@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import * as cdk from "aws-cdk-lib";
+import { DnsStack } from "./lib/dns-stack";
 import { HsaReceiptsStack } from "./lib/hsa-receipts-stack";
 import { HsaWebStack } from "./lib/hsa-web-stack";
 import { PersonalFinanceDynamoDbStack } from "./lib/personal-finance-dynamodb-stack";
@@ -14,12 +15,21 @@ const env = {
     region: "us-east-1",
 };
 
-const platform = new PlatformStack(app, "PlatformStack", { env, terminationProtection: true });
+// The single corderohq.com hosted zone. Deploys ahead of everything else — the shared
+// certificate cannot finish DNS validation until this zone is authoritative in public DNS.
+const dns = new DnsStack(app, "DnsStack", { env, terminationProtection: true });
+
+const platform = new PlatformStack(app, "PlatformStack", {
+    env,
+    terminationProtection: true,
+    rootZone: dns.rootZone,
+});
+platform.addDependency(dns);
 
 const hsaReceipts = new HsaReceiptsStack(app, "HsaReceiptArchiverStack", {
     env,
     terminationProtection: true,
-    hsaZone: platform.hsaZone,
+    rootZone: dns.rootZone,
 });
 hsaReceipts.addDependency(platform);
 
@@ -31,8 +41,8 @@ const hsaWeb = new HsaWebStack(app, "HsaWebStack", {
     distribution: platform.distribution,
     dataBucket: hsaReceipts.bucket,
     processorFunction: hsaReceipts.handler,
-    hsaZone: platform.hsaZone,
-    hsaCertificate: platform.hsaCertificate,
+    rootZone: dns.rootZone,
+    certificate: platform.certificate,
 });
 hsaWeb.addDependency(platform);
 hsaWeb.addDependency(hsaReceipts);
@@ -55,8 +65,8 @@ function createPersonalFinanceStacks(stage: Stage): void {
         stage,
         terminationProtection,
         userPool: platform.userPool,
-        personalFinanceZone: platform.personalFinanceZone,
-        personalFinanceCertificate: platform.personalFinanceCertificate,
+        rootZone: dns.rootZone,
+        certificate: platform.certificate,
         categoryGroupTable: data.categoryGroupTable,
         categoryTable: data.categoryTable,
         budgetTable: data.budgetTable,

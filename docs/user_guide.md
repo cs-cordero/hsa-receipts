@@ -37,7 +37,7 @@ npx cdk deploy HsaWebStack --exclusively
 
 ### First-Time Setup (after initial deploy)
 
-1. **Delegate DNS** from your registrar to Route 53. CDK creates hosted zones for your subdomains — copy the NS records from Route 53 into your registrar's DNS settings.
+1. **Delegate DNS** from your registrar to Route 53. Deploy `DnsStack` on its own first (`npx cdk deploy DnsStack`) — it creates the single `corderohq.com` hosted zone that every app records into. Copy its four nameservers from the `RootZoneNameServers` output into the registrar's nameserver settings, and wait for them to resolve before deploying anything else. The shared ACM certificate validates via DNS against this zone, so it cannot be issued until the delegation is live.
 
 2. **Set the Anthropic API key** in SSM Parameter Store:
     ```bash

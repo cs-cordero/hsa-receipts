@@ -22,8 +22,8 @@ import { AUTH_DOMAIN, personalFinanceDomain, personalFinanceOrigin } from "./con
 interface PersonalFinanceWebStackProps extends cdk.StackProps {
     readonly stage: Stage;
     readonly userPool: cognito.IUserPool;
-    readonly personalFinanceZone: route53.IHostedZone;
-    readonly personalFinanceCertificate: acm.ICertificate;
+    readonly rootZone: route53.IHostedZone;
+    readonly certificate: acm.ICertificate;
     readonly categoryGroupTable: dynamodb.ITable;
     readonly categoryTable: dynamodb.ITable;
     readonly budgetTable: dynamodb.ITable;
@@ -68,8 +68,8 @@ export class PersonalFinanceWebStack extends cdk.Stack {
         const apiHandler = this.createLambda(props, stage);
         this.createScheduledDensifier(props, stage);
         const httpApi = this.createApiGateway(props, userPoolClient, apiHandler, stage);
-        const { distribution, assetsBucket } = this.createCloudFront(httpApi, stage, props.personalFinanceCertificate);
-        this.createDnsRecords(props.personalFinanceZone, distribution, stage);
+        const { distribution, assetsBucket } = this.createCloudFront(httpApi, stage, props.certificate);
+        this.createDnsRecords(props.rootZone, distribution, stage);
         this.deployFrontend(assetsBucket, distribution, userPoolClient, stage);
 
         new cdk.CfnOutput(this, "HttpApiUrl", {
@@ -343,7 +343,7 @@ export class PersonalFinanceWebStack extends cdk.Stack {
     private createCloudFront(
         httpApi: apigatewayv2.HttpApi,
         stage: Stage,
-        personalFinanceCertificate: acm.ICertificate,
+        certificate: acm.ICertificate,
     ): { distribution: cloudfront.Distribution; assetsBucket: s3.Bucket } {
         const domain = personalFinanceDomain(stage);
 
@@ -401,7 +401,7 @@ export class PersonalFinanceWebStack extends cdk.Stack {
             ],
             priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
             domainNames: [domain],
-            certificate: personalFinanceCertificate,
+            certificate,
         });
 
         return { distribution, assetsBucket };
@@ -433,14 +433,14 @@ export class PersonalFinanceWebStack extends cdk.Stack {
     }
 
     private createDnsRecords(
-        personalFinanceZone: route53.IHostedZone,
+        rootZone: route53.IHostedZone,
         distribution: cloudfront.Distribution,
         stage: Stage,
     ): void {
         const domain = personalFinanceDomain(stage);
 
         new route53.ARecord(this, "CloudFrontAlias", {
-            zone: personalFinanceZone,
+            zone: rootZone,
             recordName: domain,
             target: route53.RecordTarget.fromAlias(new route53Targets.CloudFrontTarget(distribution)),
         });

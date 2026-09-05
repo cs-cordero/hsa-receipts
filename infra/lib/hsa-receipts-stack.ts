@@ -12,7 +12,7 @@ import type { Construct } from "constructs";
 import { HSA_DOMAIN } from "./constants";
 
 interface HsaReceiptsStackProps extends cdk.StackProps {
-    readonly hsaZone: route53.IHostedZone;
+    readonly rootZone: route53.IHostedZone;
 }
 
 /**
@@ -156,20 +156,23 @@ export class HsaReceiptsStack extends cdk.Stack {
             ],
         });
 
-        this.createDnsRecords(props.hsaZone);
+        this.createDnsRecords(props.rootZone);
         this.createBudgetAlerts();
     }
 
-    private createDnsRecords(hsaZone: route53.IHostedZone): void {
-        // SES MX record in Route 53
+    private createDnsRecords(rootZone: route53.IHostedZone): void {
+        // SES MX record in Route 53. The record name is explicit because the zone is now
+        // corderohq.com — defaulting to the zone apex would put SES on corderohq.com and
+        // clobber the mailbox forwarding there.
         new route53.MxRecord(this, "SesMxRecord", {
-            zone: hsaZone,
+            zone: rootZone,
+            recordName: HSA_DOMAIN,
             values: [{ priority: 10, hostName: "inbound-smtp.us-east-1.amazonaws.com" }],
         });
 
         // SES domain verification TXT record
         new route53.TxtRecord(this, "SesTxtRecord", {
-            zone: hsaZone,
+            zone: rootZone,
             recordName: `_amazonses.${HSA_DOMAIN}`,
             values: ["YonxACp7We9tgvwNDh9cZQtqb5HkmUuxn0NGRnWIRqk="],
         });

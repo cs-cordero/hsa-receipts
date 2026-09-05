@@ -20,8 +20,8 @@ interface HsaWebStackProps extends cdk.StackProps {
     readonly distribution: cloudfront.IDistribution;
     readonly dataBucket: s3.IBucket;
     readonly processorFunction: lambda.IFunction;
-    readonly hsaZone: route53.IHostedZone;
-    readonly hsaCertificate: acm.ICertificate;
+    readonly rootZone: route53.IHostedZone;
+    readonly certificate: acm.ICertificate;
 }
 
 /**
@@ -192,7 +192,7 @@ export class HsaWebStack extends cdk.Stack {
 
         const apiDomain = new apigatewayv2.DomainName(this, "ApiDomainName", {
             domainName: API_DOMAIN,
-            certificate: props.hsaCertificate,
+            certificate: props.certificate,
         });
 
         new apigatewayv2.ApiMapping(this, "ApiMapping", {
@@ -200,12 +200,12 @@ export class HsaWebStack extends cdk.Stack {
             domainName: apiDomain,
         });
 
-        this.createDnsRecords(props.hsaZone, apiDomain);
+        this.createDnsRecords(props.rootZone, apiDomain);
     }
 
-    private createDnsRecords(hsaZone: route53.IHostedZone, apiDomain: apigatewayv2.DomainName): void {
+    private createDnsRecords(rootZone: route53.IHostedZone, apiDomain: apigatewayv2.DomainName): void {
         new route53.ARecord(this, "ApiDnsRecord", {
-            zone: hsaZone,
+            zone: rootZone,
             recordName: API_DOMAIN,
             target: route53.RecordTarget.fromAlias(
                 new route53Targets.ApiGatewayv2DomainProperties(
