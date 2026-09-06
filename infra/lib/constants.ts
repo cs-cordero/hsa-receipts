@@ -10,6 +10,8 @@ export const HSA_ORIGIN = `https://${HSA_DOMAIN}`;
 
 export const PERSONAL_FINANCE_DOMAIN = `finance.${ROOT_DOMAIN}`;
 
+export const MATH_DOMAIN = `math.${ROOT_DOMAIN}`;
+
 export function personalFinanceDomain(stage: Stage): string {
     return stage === "prod" ? PERSONAL_FINANCE_DOMAIN : `dev.${PERSONAL_FINANCE_DOMAIN}`;
 }

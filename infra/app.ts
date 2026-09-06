@@ -3,6 +3,7 @@ import * as cdk from "aws-cdk-lib";
 import { DnsStack } from "./lib/dns-stack";
 import { HsaReceiptsStack } from "./lib/hsa-receipts-stack";
 import { HsaWebStack } from "./lib/hsa-web-stack";
+import { MathQuizStack } from "./lib/math-quiz-stack";
 import { PersonalFinanceDynamoDbStack } from "./lib/personal-finance-dynamodb-stack";
 import { PersonalFinanceWebStack } from "./lib/personal-finance-web-stack";
 import { PlatformStack } from "./lib/platform-stack";
@@ -46,6 +47,15 @@ const hsaWeb = new HsaWebStack(app, "HsaWebStack", {
 });
 hsaWeb.addDependency(platform);
 hsaWeb.addDependency(hsaReceipts);
+
+// Math quiz — a static page only. No API, no sign-in, no database.
+const mathQuiz = new MathQuizStack(app, "MathQuizStack", {
+    env,
+    terminationProtection: true,
+    rootZone: dns.rootZone,
+    certificate: platform.certificate,
+});
+mathQuiz.addDependency(platform);
 
 // Personal finance app — instantiate for each stage. Prod stacks carry termination
 // protection so an accidental `cdk destroy` can't wipe the live data or user pool client.
