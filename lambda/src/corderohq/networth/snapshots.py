@@ -1,4 +1,4 @@
-"""Pure aggregation helpers for net-worth snapshots (no AWS).
+"""Helpers that add up the net worth snapshots. These call no AWS service.
 
 Kept separate from the table wrapper and the handler so the prefill and history
 shaping logic is unit-testable in isolation — the same split the budget feature
@@ -17,7 +17,7 @@ from typing import Any
 
 
 def row_total(row: dict[str, Any]) -> Any:
-    """Account total for a snapshot row = sum of its per-class `byAssetClass` values.
+    """Return the total for one snapshot row. It is the sum of the `byAssetClass` values.
 
     Sums preserve the incoming numeric type (Decimal in prod, int in tests). An
     empty/absent map totals to 0.
@@ -26,7 +26,7 @@ def row_total(row: dict[str, Any]) -> Any:
 
 
 def compute_prefill(all_rows: list[dict[str, Any]], year_month: str) -> dict[str, dict[str, dict[str, Any]]]:
-    """Most recent recorded value strictly BEFORE `year_month`, per (account, class).
+    """Return the most recent value before `year_month`, for each (account, class) pair.
 
     Returns {accountId: {assetClass: {"value": <v>, "fromYearMonth": <ym>}}}. This
     powers the entry grid's per-class "carried from 2026-06" prefill. Only months
@@ -54,7 +54,7 @@ def build_month_view(
     month_rows: list[dict[str, Any]],
     prefill: dict[str, dict[str, dict[str, Any]]],
 ) -> list[dict[str, Any]]:
-    """Shape the GET /networth/{YYYY-MM} rows — one entry per account, per class.
+    """Build the rows for GET /networth/{YYYY-MM}. There is one entry for each account and class.
 
     Membership: every active account, plus any inactive account that has a recorded
     value THIS month. For each account, the classes shown are its active
@@ -74,8 +74,8 @@ def build_month_view(
         if not account.get("active", False) and not this_month:
             continue
 
-        # Active classes first (in their stored order), then any valued-this-month
-        # class not already listed.
+        # The active classes come first, in the order they are stored. Then comes any class
+        # with a value this month that is not in that list.
         classes_to_show: list[str] = list(account.get("assetClasses", []))
         for cls in this_month:
             if cls not in classes_to_show:
@@ -91,7 +91,7 @@ def build_month_view(
 
 
 def build_history(accounts: list[dict[str, Any]], all_rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Shape GET /networth/history — the Excel-style wide view.
+    """Build the response for GET /networth/history. This is the wide view, like a spreadsheet.
 
     Returns:
         {
@@ -129,8 +129,8 @@ def build_history(accounts: list[dict[str, Any]], all_rows: list[dict[str, Any]]
         liabilities: Any = 0
         for account_id, value in values[year_month].items():
             account = account_by_id.get(account_id)
-            # Tracked-but-excluded accounts (e.g. a 529 you follow but don't own)
-            # keep their recorded values in `values` but never roll into the totals.
+            # Some accounts are tracked but excluded, such as a 529 that you follow but do
+            # not own. Their values stay in `values`, but they never add into the totals.
             if account is not None and account.get("excludedFromNetWorth", False):
                 continue
             if account is not None and account.get("liability", False):

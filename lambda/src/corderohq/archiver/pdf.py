@@ -18,7 +18,7 @@ _CONTENT_TYPE_SUFFIX = {
 
 
 def convert_to_pdfa(data: bytes, content_type: str) -> bytes:
-    """Convert an image or PDF to PDF/A-2b format using Ghostscript.
+    """Convert an image or a PDF to the PDF/A-2b format with Ghostscript.
 
     Images are first converted to PDF via Pillow, then Ghostscript produces PDF/A.
     PDFs go directly through Ghostscript.
@@ -63,7 +63,7 @@ def convert_to_pdfa(data: bytes, content_type: str) -> bytes:
 
 
 def get_page_count(pdf_data: bytes) -> int:
-    """Return the number of pages in a PDF using Ghostscript."""
+    """Return the number of pages in a PDF. Ghostscript counts them."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp = Path(tmp_dir)
         input_pdf = tmp / "input.pdf"
@@ -91,7 +91,7 @@ def get_page_count(pdf_data: bytes) -> int:
 
 
 def extract_page(pdf_data: bytes, page_num: int) -> bytes:
-    """Extract a single page from a PDF using Ghostscript."""
+    """Take one page out of a PDF. Ghostscript does the work."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp = Path(tmp_dir)
         input_pdf = tmp / "input.pdf"

@@ -1,4 +1,4 @@
-"""Main Lambda handler for processing HSA receipt emails and web uploads."""
+"""The main Lambda handler. It reads an HSA receipt from an email or from a web upload."""
 
 import json
 import logging
@@ -161,7 +161,7 @@ def _handle_web_upload(event: dict[str, Any]) -> dict[str, Any]:
 
 
 def _send_notifications(result: ProcessingResult) -> None:
-    """Send SNS notifications based on processing results."""
+    """Send the SNS notifications for the results."""
     for rejection in result.rejections:
         notify_rejection(rejection.filename, rejection.description, rejection.reasoning)
     if result.entries:

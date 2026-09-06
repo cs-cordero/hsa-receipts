@@ -193,7 +193,7 @@ describe("PlatformStack", () => {
             });
         });
 
-        // Cognito will not create a custom domain unless the parent domain resolves.
+        // Cognito makes a custom domain only when the parent domain resolves.
         test("apex A record exists, satisfying Cognito's parent-domain requirement", () => {
             template.hasResourceProperties("AWS::Route53::RecordSet", {
                 Name: "corderohq.com.",

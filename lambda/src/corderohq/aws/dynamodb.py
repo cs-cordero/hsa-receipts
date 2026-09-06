@@ -38,7 +38,7 @@ def current_year_month() -> str:
 
 
 def _month_end_utc(year_month: str) -> datetime:
-    """End-of-month instant for `year_month` in BUDGET_TZ, converted to UTC.
+    """Return the last instant of `year_month` in BUDGET_TZ, converted to UTC.
 
     Per the architecture's "Display names on locked months" section: the cutoff
     must use the DST offset in effect on the last day of the year-month, not a
@@ -86,7 +86,7 @@ def _resolve_historical_name(category: dict[str, Any], month_end_utc: datetime) 
     history = category.get("nameHistory") or []
     if not history:
         return None
-    # Sort by replacedAt ascending so we pick the earliest entry post-dating the month.
+    # Sort by replacedAt, oldest first. We then take the first entry that comes after the month.
     sorted_history = sorted(history, key=lambda e: e["replacedAt"])
     for entry in sorted_history:
         replaced_at = datetime.fromisoformat(entry["replacedAt"])
@@ -110,8 +110,8 @@ class CategoryGroupTable:
         """Return all groups (active + inactive), sorted by order then name."""
         response = self._table.scan()
         items: list[dict[str, Any]] = response["Items"]
-        # System groups (e.g. Unassigned) always sort last regardless of their numeric
-        # order so they don't shift around when the user reorders real groups.
+        # A system group, such as Unassigned, always sorts last, whatever its number. It
+        # therefore stays in place when the user changes the order of the other groups.
         return sorted(items, key=lambda g: (bool(g.get("system", False)), int(g.get("order", 0)), g["name"]))
 
     def get(self, group_id: str) -> dict[str, Any] | None:
@@ -119,12 +119,15 @@ class CategoryGroupTable:
         return response.get("Item")
 
     def _name_exists(self, name: str, exclude_id: str | None = None) -> bool:
-        """Case-insensitive name uniqueness check. Same race caveat as CategoryTable."""
+        """Return True if a group uses this name already. Case does not count.
+
+        This check has the same race as CategoryTable.
+        """
         lower_name = name.lower()
         return any(g["name"].lower() == lower_name and g["groupId"] != exclude_id for g in self.list_all())
 
     def _next_order(self) -> int:
-        """Next available order for a NEW non-system group.
+        """Return the next free order value for a new group that is not a system group.
 
         System groups (Unassigned) are excluded from the max computation — they
         sort last by `list_all`'s ordering, so their numeric `order` shouldn't
@@ -244,7 +247,9 @@ class CategoryTable:
         return response.get("Item")
 
     def _name_exists(self, name: str, exclude_id: str | None = None) -> bool:
-        """Check if any category (active or inactive) already uses this name (case-insensitive).
+        """Return True if a category uses this name already. Case does not count.
+
+        This applies to an active category and to an inactive one.
 
         Race condition: this is a Scan-then-write pattern with no DynamoDB-level
         unique constraint on `name`. Two simultaneous category creates with the same
@@ -307,7 +312,7 @@ class CategoryTable:
 
         now = datetime.now(tz=UTC).isoformat()
         if existing["name"] == name:
-            # No-op rename: only bump updatedAt, don't pollute nameHistory.
+            # The name did not change. Set updatedAt only, and add nothing to nameHistory.
             response = self._table.update_item(
                 Key={"categoryId": category_id},
                 UpdateExpression="SET updatedAt = :now",
@@ -316,8 +321,9 @@ class CategoryTable:
             )
             return response["Attributes"]
 
-        # Architecture-spec history entry: previousName + replacedAt timestamp. Locked-month
-        # summaries use this to render category names as they were at the time of action.
+        # One history entry, as the architecture spec states: previousName and a replacedAt
+        # time. A summary of a locked month reads this, and it then shows the name that the
+        # category had at that time.
         history_entry = {"previousName": existing["name"], "replacedAt": now}
         response = self._table.update_item(
             Key={"categoryId": category_id},
@@ -373,7 +379,7 @@ class CategoryTable:
             )
 
     def deactivate(self, category_id: str) -> dict[str, Any] | None:
-        """Soft-delete a category by setting active=False. Returns the updated item, or None if not found."""
+        """Set active=False on a category. Return the changed item, or None if it does not exist."""
         if self.get(category_id) is None:
             return None
 
@@ -388,7 +394,10 @@ class CategoryTable:
         return response["Attributes"]
 
     def delete(self, category_id: str) -> None:
-        """Hard-delete the Category row. No soft-delete fallback — used by admin hard-delete only."""
+        """Delete the Category row for ever. This has no soft-delete step.
+
+        Only the admin hard delete calls this.
+        """
         self._table.delete_item(Key={"categoryId": category_id})
 
     def reactivate(self, category_id: str) -> dict[str, Any] | None:
@@ -422,7 +431,7 @@ class BudgetTable:
         return response["Items"]
 
     def put_targets(self, year_month: str, targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Set budget targets for a month. Overwrites all targets for the given month."""
+        """Set the budget targets for one month. This writes over every target in that month."""
         existing = self.get_targets(year_month)
         with self._table.batch_writer() as batch:
             for item in existing:
@@ -461,17 +470,17 @@ class BudgetTable:
         return items
 
     def put_single(self, year_month: str, category_id: str, amount: Any) -> None:
-        """Write a single budget row. Used by densification to fill missing cells."""
+        """Write one budget row. The densify step calls this to fill a cell that is absent."""
         self._table.put_item(
             Item={"yearMonth": year_month, "categoryId": category_id, "amount": amount},
         )
 
     def delete_single(self, year_month: str, category_id: str) -> None:
-        """Delete a single budget row. Used by /pin when clearing a pin (amount=null)."""
+        """Delete one budget row. /pin calls this when it clears a pin, with amount=null."""
         self._table.delete_item(Key={"yearMonth": year_month, "categoryId": category_id})
 
     def find_future_months_with_category(self, category_id: str, after_month: str) -> list[str]:
-        """Return sorted list of yearMonth values > after_month that contain the given categoryId."""
+        """Return the sorted yearMonth values later than after_month that hold this categoryId."""
         months: set[str] = set()
         params: dict[str, Any] = {
             "FilterExpression": "categoryId = :cid AND yearMonth > :ym",
@@ -488,7 +497,7 @@ class BudgetTable:
         return sorted(months)
 
     def count_rows_for_category(self, category_id: str) -> int:
-        """Count every Budget row referencing the given categoryId. Used by hard-delete preview."""
+        """Count each Budget row that names this categoryId. The hard-delete preview calls this."""
         count = 0
         params: dict[str, Any] = {
             "FilterExpression": "categoryId = :cid",
@@ -504,7 +513,7 @@ class BudgetTable:
         return count
 
     def find_past_months_with_category(self, category_id: str, before_month: str) -> list[str]:
-        """Return sorted list of yearMonth values < before_month that contain the given categoryId.
+        """Return the sorted yearMonth values earlier than before_month that hold this categoryId.
 
         Used by the hard-delete preview to highlight historical data the delete would erase.
         The caller filters by editability state if it needs only locked vs grace.
@@ -525,7 +534,7 @@ class BudgetTable:
         return sorted(months)
 
     def delete_all_for_category(self, category_id: str) -> int:
-        """Cascade-delete every Budget row referencing the given categoryId. Returns count.
+        """Delete every Budget row that names this categoryId. Return the count.
 
         Used by hard-delete only — soft-delete (/deactivate) drops just the future pin
         rows. See docs/personal-finance-architecture.md "Hard delete semantics".
@@ -562,7 +571,7 @@ class TransactionsTable:
         self._table = _DYNAMO_RESOURCE.Table(table_name)
 
     def list_for_month(self, year_month: str) -> list[dict[str, Any]]:
-        """List all transactions for a given month (YYYY-MM), sorted by sortId."""
+        """Return every transaction for one month (YYYY-MM), sorted by sortId."""
         response = self._table.query(
             KeyConditionExpression="yearMonth = :ym",
             ExpressionAttributeValues={":ym": year_month},
@@ -679,7 +688,7 @@ class TransactionsTable:
         return count
 
     def count_rows_for_category(self, category_id: str) -> int:
-        """Count every Transactions row referencing the given categoryId. Used by hard-delete preview."""
+        """Count each Transactions row that names this categoryId. The hard-delete preview calls this."""
         count = 0
         params: dict[str, Any] = {
             "FilterExpression": "categoryId = :cid",
@@ -695,7 +704,7 @@ class TransactionsTable:
         return count
 
     def delete_all_for_category(self, category_id: str) -> int:
-        """Cascade-delete every Transactions row referencing the given categoryId. Returns count.
+        """Delete every Transactions row that names this categoryId. Return the count.
 
         Hard-delete only — there's no soft-delete equivalent for transactions.
         See docs/personal-finance-architecture.md "Hard delete semantics".
@@ -827,7 +836,7 @@ def compute_summary(
     current_ym = f"{now.year:04d}-{now.month:02d}"
     is_future = year_month > current_ym
 
-    # Densification can write `amount=null` when walk-back finds no prior history
+    # The densify step writes `amount=null` when the walk back finds no earlier row.
     # (architecture: "New category, no prior history"). Null means "no target" —
     # for aggregation we treat it as 0 since there's nothing to subtract from.
     #
@@ -916,7 +925,7 @@ def compute_summary(
     }
 
 
-# --- Net worth tracking ---
+# --- The net worth record ---
 #
 # HOUSEHOLD_PK and PROFILE_SETTINGS_SK are imported from networth.models (the
 # authoritative home for the Profile table's key constants); list_people skips the

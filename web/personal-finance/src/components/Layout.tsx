@@ -30,9 +30,9 @@ const NETWORTH_LINKS: SubLink[] = [
 // The landing page for each group when you click into it from another section.
 const GROUP_HOME: Record<NavGroup, string> = { budget: "/", networth: "/net-worth" };
 
-// Which top-level group a path belongs to (drives the active-button highlight and
-// the default-open sub-menu). Net-worth paths are checked first; Summary ("/") is a
-// budget path, so it must not be matched as a prefix of everything.
+// Find which top-level group holds a path. This sets which button looks active, and which
+// sub-menu opens first. Check the net worth paths first. Summary ("/") is a budget path, so
+// it must not match every other path as a prefix.
 function groupForPath(pathname: string): NavGroup | null {
     if (NETWORTH_LINKS.some((l) => l.to === pathname)) return "networth";
     if (pathname === "/" || BUDGET_LINKS.some((l) => l.to === pathname)) return "budget";
@@ -44,12 +44,13 @@ export default function Layout() {
     const location = useLocation();
     const navigate = useNavigate();
     const activeGroup = groupForPath(location.pathname);
-    // Which group's sub-bar is showing. Defaults to the current route's group so you
-    // land on the relevant sub-menu.
+    // The group whose sub-bar is open. It starts as the group of the current route, so the
+    // correct sub-menu is there when the page opens.
     const [openGroup, setOpenGroup] = useState<NavGroup | null>(activeGroup);
 
-    // Clicking a group you're already in just toggles its sub-bar (no navigation).
-    // Clicking a different group jumps to that group's home page and opens its sub-bar.
+    // A click on the group you are in opens or closes its sub-bar, and moves to no other
+    // page. A click on a different group opens the home page of that group, and its
+    // sub-bar.
     const handleGroupClick = (group: NavGroup) => {
         if (activeGroup === group) {
             setOpenGroup((cur) => (cur === group ? null : group));

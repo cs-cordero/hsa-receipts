@@ -1,4 +1,4 @@
-"""Scheduled-invocation Lambda for monthly budget densification.
+"""The Lambda that a schedule calls each month, to make the budget month dense.
 
 Invoked by an EventBridge Scheduler at midnight ET on the 1st of every month.
 Runs the same `densify` routine that the API handlers use for lazy hydration,
@@ -24,7 +24,7 @@ _BUDGET_TABLE = BudgetTable(get_env_var("BUDGET_TABLE_NAME"))
 
 
 def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
-    """Run densification for the current year-month.
+    """Make the current year-month dense.
 
     Logs a single structured JSON line so "last successful densification" is
     queryable from CloudWatch Insights:

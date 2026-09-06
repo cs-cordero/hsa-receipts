@@ -2,14 +2,29 @@
 
 ## What This Project Does
 
-A personal finance tool for the family. Today the app's only feature is monthly household budgeting: users log in, set per-category budget targets for a given month, upload bank/credit-card CSV exports to populate transactions, and review actuals vs. budget. Budget edits are recorded in an audit log with a required explanation. CSV imports use an LLM to identify the date/description/amount columns and to auto-categorize each transaction against the user's active category list. Future features (e.g. Monte Carlo net worth simulation) will live in this same app under their own feature folders.
+A finance tool for the family. It has two features today: a monthly household budget, and a net
+worth record.
 
-Budget targets and transactions are constrained to **editable year-months** (current, the previous month while still in its 7-day grace period, and the next 12 months). Locked year-months are read-only by default; an authenticated **admin override** lets privileged users mutate them. Budget-target mutations via override are recorded in the audit log; transaction mutations are not (see **Audit scope**).
+For the budget, a user signs in and sets a target for each category in a month. The user then
+uploads a CSV export from a bank or a credit card, and the app fills in the transactions. The user
+can then compare the actual amounts against the budget. The app records each budget change in an
+audit log, and each change needs an explanation.
+
+For a CSV import, an LLM finds the date column, the description column, and the amount column. It
+then gives a category to each transaction, from the categories the user has active.
+
+Each new feature goes in this same app, in a folder of its own.
+
+A budget target and a transaction are permitted only in an **editable year-month**. That means the
+current month, the previous month while its 7-day grace period continues, and the next 12 months.
+A locked year-month is read-only by default. An **admin override** lets a privileged user change
+one. The audit log records a budget-target change made through the override. It does not record a
+transaction change — see **Audit scope**.
 
 ## Project Layout
 
 ```
-personal-finance/    React + TypeScript frontend (Vite)
+web/personal-finance/    React + TypeScript frontend (Vite)
     src/
         pages/       Top-level route pages
         components/  Shared UI components
@@ -27,23 +42,32 @@ infra/lib/
 
 ## Infrastructure Overview
 
-The infrastructure is split into two CDK stacks that build on `DnsStack` (the single `corderohq.com` hosted zone) and the shared `PlatformStack` (TLS certificate, Cognito user pool).
+Two CDK stacks hold this app. They build on `DnsStack`, which holds the single `corderohq.com`
+hosted zone, and on the shared `PlatformStack`, which holds the TLS certificate and the Cognito
+user pool.
 
 ### PersonalFinanceDynamoDbStack
 
-Owns the DynamoDB tables for the personal finance app. Separated from the web stack so app redeploys don't risk the data. All tables are pay-per-request with point-in-time recovery enabled. Removal policy is `RETAIN` in prod and `DESTROY` in dev.
+This stack owns the DynamoDB tables. It stays separate from the web stack, so that a deploy of the
+app puts no data at risk. Every table bills for each request, and every table has point-in-time
+recovery. The removal policy is `RETAIN` in prod, and `DESTROY` in dev.
 
 ### PersonalFinanceWebStack
 
-The application layer. Creates a Cognito app client (PKCE, no client secret), a Python 3.13 Lambda handler with DynamoDB read/write and SSM `GetParameter` permissions, an API Gateway HTTP API with a Cognito JWT authorizer, and a CloudFront distribution that fronts both the React frontend and the API.
+The app layer. It makes a Cognito app client that uses PKCE and has no client secret. It also
+makes a Lambda handler in Python 3.13, which can read and write DynamoDB and can call SSM
+`GetParameter`. It then makes an API Gateway HTTP API with a Cognito JWT authorizer, and a
+CloudFront distribution. That distribution serves both the React frontend and the API.
 
 The CloudFront distribution has three behaviors:
 
-- **Default** → S3 origin serving the static React build (cache disabled in dev).
-- **`/api/*`** → API Gateway origin, all viewer headers forwarded (so the `Authorization` Bearer token reaches the Lambda), cache disabled.
-- **`/oauth2/*`** → Cognito hosted-UI domain origin, cache disabled.
+- **Default** → the S3 origin, which serves the static React build. The cache is off in dev.
+- **`/api/*`** → the API Gateway origin. It forwards every viewer header, so that the
+  `Authorization` Bearer token reaches the Lambda. The cache is off.
+- **`/oauth2/*`** → the Cognito hosted-UI domain origin. The cache is off.
 
-Routing `/oauth2/*` through CloudFront keeps Cognito on the same origin as the app, so refresh-token requests can use same-origin cookies/headers without CORS.
+`/oauth2/*` goes through CloudFront on purpose. Cognito then shares an origin with the app, so a
+request for a new token can use the cookies and headers of that origin. No CORS is necessary.
 
 ### How They Connect
 
@@ -59,7 +83,9 @@ DnsStack (corderohq.com hosted zone)
 
 ## Data Model (DynamoDB)
 
-All amounts are stored as **integer millionths of a dollar** (so $12.34 → 12_340_000) to avoid floating-point error. The frontend converts on display.
+Each amount is an **integer, in millionths of a dollar**. For example, $12.34 becomes 12_340_000.
+This keeps the app clear of floating-point error. The frontend converts each value before it shows
+it.
 
 ```
 +------------------------+--------------------+------------+-----------------------------+
@@ -122,15 +148,27 @@ All amounts are stored as **integer millionths of a dollar** (so $12.34 → 12_3
 
 ### Category name uniqueness
 
-The Category-{stage} schema has no PK or GSI on `name`, so case-insensitive uniqueness is enforced **in application code, not in DynamoDB**:
+The Category-{stage} schema has no PK and no GSI on `name`. Therefore **the application code
+enforces the unique name, and DynamoDB does not**. Case does not count:
 
-1. On every `POST /api/categories` and `PUT /api/categories/{id}` (rename), the handler `Scan`s the Category table, lower-cases each existing `name`, and checks for a match against the lower-cased incoming name. If a match is found, returns `409 Conflict`. Otherwise proceeds with the write.
+1. On each `POST /api/categories` and each `PUT /api/categories/{id}` rename, the handler runs a
+   `Scan` on the Category table. It makes each `name` lower-case, and compares it with the new
+   name in lower-case. On a match it returns `409 Conflict`. If there is no match, it writes.
 
-This approach is **racy**. Two simultaneous creates with the same name will both pass the uniqueness check independently and both write their rows — leaving the table with two categories sharing a name. At household scale this is a non-issue: a single user typing into a single browser tab won't race themselves. The implementation must include a prominent comment at the uniqueness-check call site flagging the race so future maintainers don't assume it's airtight.
+This method **has a race**. Two creates at the same moment, with the same name, both pass the check
+on their own, and both write their rows. The table then holds two categories with one name. At the
+scale of one household this does not matter, because one user in one browser tab cannot race
+themselves. The code must carry a clear comment at the check, so that the next person does not
+believe the check is complete.
 
-**If this ever needs to scale beyond single-household use**, the refactor path is:
+**If this app must one day serve more than one household**, change it this way:
 
-- Use the sentinel-item pattern in the same table: write the Category row AND a second item with `PK = "NAME#{lowercased}"` (and a placeholder SK such as `_` since the table currently has no SK) in one `TransactWriteItems` call, each with `ConditionExpression: attribute_not_exists(PK)`. The transaction fails atomically if any other writer has already claimed the name. This is the correct, race-free design but adds enough complexity (the schema gains a polymorphic PK, the rename path has to also re-issue the sentinel) that it's not worth it for now.
+- Use a sentinel item in the same table. Write the Category row and a second item together, in one
+  `TransactWriteItems` call. Give the second item `PK = "NAME#{lowercased}"`, and an SK such as `_`
+  to fill the space, because the table has no SK today. Give each write the condition
+  `attribute_not_exists(PK)`. The whole transaction then fails if another writer holds the name
+  already. This design has no race, and it is the correct one. It is not worth the work today: the
+  schema gains a PK of two kinds, and the rename path must write the sentinel again.
 
 ## Request Flow
 
@@ -143,11 +181,15 @@ Browser --> CloudFront --> S3 (React app)
                 +--> /oauth2/* --> Cognito hosted UI (same-origin)
 ```
 
-The frontend uses PKCE authorization-code flow with the Cognito hosted UI. After callback, the SPA stores tokens, sends the access token as `Authorization: Bearer ...` on API calls, and uses a single-flight refresh on 401.
+The frontend signs the user in with the Cognito hosted UI. It uses the authorization-code flow with
+PKCE. After the callback, the app keeps the tokens. It then sends the access token on each API call,
+as `Authorization: Bearer ...`. On a 401 it gets a new token, and it permits only one such request
+at a time.
 
 ## API Routes (Lambda)
 
-All routes are JWT-authenticated and namespaced under `/api`. The handler routes by `(method, rawPath)` to private functions.
+Every route needs a JWT, and every route sits under `/api`. The handler reads
+`(method, rawPath)`, and sends each request to a private function.
 
 ```
 +--------+------------------------------------------+------------------------------------+
@@ -272,19 +314,38 @@ All routes are JWT-authenticated and namespaced under `/api`. The handler routes
 +--------+------------------------------------------+------------------------------------+
 ```
 
-Mutations on transactions use `POST` (not `PUT`/`DELETE`) so CloudFront caching policies don't strip the body.
+A change to a transaction uses `POST`, and not `PUT` or `DELETE`. A CloudFront cache policy can
+remove the body from the other two methods.
 
-All responses include strict security headers (`HSTS`, `X-Content-Type-Options`, `X-Frame-Options`, `Cache-Control: no-store`).
+Every response carries strict security headers: `HSTS`, `X-Content-Type-Options`,
+`X-Frame-Options`, and `Cache-Control: no-store`.
 
-All **editability-gated** mutating endpoints (`POST /api/budget/{YYYY-MM}/replace`, `POST /api/budget/{YYYY-MM}/pin`, `POST /api/transactions`, `POST /api/transactions/update`, `POST /api/transactions/delete`, `POST /api/transactions/commit`) accept an optional `override: true` flag in the request body. The flag is honored only if the JWT proves admin group membership (see **Editability and the Admin Override**); otherwise the handler returns `403`. The override flag has no effect on `GET` endpoints — reads are unrestricted for any authenticated user. The other mutating endpoints (`POST /api/categories`, `PUT /api/categories/{id}` rename, `/deactivate`, `/reactivate`) are not editability-gated and do not accept `override`. `DELETE /api/categories/{id}` is admin-only via a different mechanism (no `override` flag; see **Hard delete semantics**).
+Six endpoints have an **editability gate**: `POST /api/budget/{YYYY-MM}/replace`,
+`POST /api/budget/{YYYY-MM}/pin`, `POST /api/transactions`, `POST /api/transactions/update`,
+`POST /api/transactions/delete`, and `POST /api/transactions/commit`. Each one accepts an optional
+`override: true` flag in the body. The handler obeys that flag only if the JWT shows that the user
+is in the admin group — see **Editability and the Admin Override**. If it does not, the handler
+returns `403`. The flag does nothing on a `GET` endpoint, because any signed-in user may read
+without limit. The other endpoints that change data — `POST /api/categories`, the
+`PUT /api/categories/{id}` rename, `/deactivate`, and `/reactivate` — have no editability gate,
+and they do not accept `override`. `DELETE /api/categories/{id}` is admin-only through a different
+route, with no `override` flag. See **Hard delete semantics**.
 
-Budget-target writes produce audit log entries: `/replace`, `/pin`, and `/deactivate` (the latter only when it drops future pins, in which case one `UNPIN` entry is written per dropped pin). `DELETE /api/categories/{id}` also writes a `CATEGORY_HARD_DELETE` entry. Transaction mutations (insert/update/delete/commit), `POST /api/categories`, `PUT /api/categories/{id}` (rename), and `/reactivate` are not audited. See **Audit Scope** below.
+A write to a budget target makes an audit log entry. This applies to `/replace`, to `/pin`, and to
+`/deactivate`. `/deactivate` makes an entry only when it drops a future pin, and it then writes one
+`UNPIN` entry for each pin it drops. `DELETE /api/categories/{id}` also writes one
+`CATEGORY_HARD_DELETE` entry. The app does not audit a change to a transaction, whether an insert,
+an update, a delete, or a commit. It also does not audit `POST /api/categories`, the
+`PUT /api/categories/{id}` rename, or `/reactivate`. See **Audit Scope** below.
 
-`PUT /api/categories/{id}` (rename) is not subject to editability checks — renames are always allowed and update the `nameHistory` list on the Category row so locked-month displays can resolve the name in effect at that time.
+The `PUT /api/categories/{id}` rename has no editability check. A rename is always permitted. It
+adds to the `nameHistory` list on the Category row, so that a locked month can show the name that
+was in use at that time.
 
 ## Editability and the Admin Override
 
-The window of mutable year-months is computed server-side on every mutating request. Clients never decide what is editable; the Lambda is the source of truth.
+The server computes the range of year-months that a user may change. It does this on each request
+that changes data. A client never decides what is editable. The Lambda is the only authority.
 
 ### Constants
 
@@ -305,11 +366,15 @@ BUDGET_TZ = "America/New_York"
 5. If `yearMonth` is `current_ym - 1 month` AND `now_et < (first of current_ym + GRACE_PERIOD_DAYS, 00:00 ET)`: `GRACE`.
 6. Otherwise: `LOCKED`.
 
-`GRACE` is treated identically to `EDITABLE` for mutation checks; the distinction exists so the frontend can surface a "grace expires in X days" banner.
+For a change check, `GRACE` and `EDITABLE` mean the same thing. The two names exist so that the
+frontend can show a banner that says "grace ends in X days".
 
-Note that `EDITABLE` covers both the current year-month and the next 12. The `/pin` endpoint applies a stricter rule on top of editability (must be `EDITABLE` AND `yearMonth > current_ym`), so the current and grace months — both editable — are rejected for `/pin` and routed to `/replace`.
+`EDITABLE` covers the current year-month and the next 12. The `/pin` endpoint adds a stricter rule
+on top: the month must be `EDITABLE` **and** later than `current_ym`. So `/pin` rejects the current
+month and the grace month, although both are editable, and the user goes to `/replace` instead.
 
-The rollover instant is **midnight ET on day 1** of the new month, regardless of DST. The grace cutoff is **midnight ET on day 8** of the new month.
+The month changes at **midnight ET on day 1** of the new month, whatever the daylight saving
+offset. The grace period ends at **midnight ET on day 8** of the new month.
 
 ### Enforcement
 
@@ -322,45 +387,79 @@ The rollover instant is **midnight ET on day 1** of the new month, regardless of
 | `POST /api/transactions/delete` | Each item's `yearMonth` must be EDITABLE or GRACE |
 | `POST /api/transactions/commit` | Every row's `transactionDate` year-month must be EDITABLE or GRACE; see **CSV commit semantics** |
 
-On failure the response is `409 Conflict` with a body listing every offending year-month or row. Single-shot mutations report one item; batch mutations report every failing item in one response — no partial commits, no one-error-at-a-time.
+On a failure the response is `409 Conflict`. The body lists every year-month and every row at
+fault. A change to one item reports that one item. A change to a batch reports every item that
+failed, in one response. The app never commits part of a batch, and it never reports one error at
+a time.
 
 ### Admin override
 
-Override is a Cognito user-pool group named `budget-admin-{stage}` (`budget-admin-dev`, `budget-admin-prod`, etc.). The stage-specific naming is deliberate: dev admin status does not leak into prod. The Lambda reads its `STAGE` env var and computes the expected group name on every request.
+The override is a Cognito user pool group, named `budget-admin-{stage}` — for example
+`budget-admin-dev` and `budget-admin-prod`. The name holds the stage on purpose, so that an admin
+in dev is not an admin in prod. The Lambda reads its `STAGE` environment variable, and it builds
+the group name it expects on each request.
 
-The API Gateway JWT authorizer passes the access token's `cognito:groups` claim into the Lambda event. The handler:
+The API Gateway JWT authorizer puts the `cognito:groups` claim from the access token into the
+Lambda event. The handler then does these steps:
 
-1. Parses `override: true` from the request body (default `false`).
-2. If `override` is true, verifies that `budget-admin-{STAGE}` is in `cognito:groups`. If not, returns `403`.
-3. If verified, skips the editability check on this request only.
-4. For budget-target writes (`/replace` and `/pin`), sets `override: true` on every audit entry the request writes.
+1. It reads `override: true` from the request body. The default is `false`.
+2. If `override` is true, it looks for `budget-admin-{STAGE}` in `cognito:groups`. If that group is
+   absent, it returns `403`.
+3. If the group is present, it skips the editability check, for this one request only.
+4. For a write to a budget target, through `/replace` or `/pin`, it sets `override: true` on every
+   audit entry that the request makes.
 
-Hard delete (`DELETE /api/categories/{id}`) uses the same group claim but does not use the `override` flag — the operation is admin-only regardless. See **Hard delete semantics**.
+The hard delete, `DELETE /api/categories/{id}`, uses the same group claim. It does not use the
+`override` flag, because only an admin may do it in any case. See **Hard delete semantics**.
 
-The operational/UX side of admin mode (bootstrap, frontend toggle, per-action behavior, admin tools page) is documented in **Admin Operating Model** below.
+**Admin Operating Model**, below, covers how an admin works day to day: how to make the first
+admin, the toggle in the frontend, what each action does, and the admin tools page.
 
 ### Audit scope
 
 Recorded in `BudgetAuditLog-{stage}`:
 
-- `POST /api/budget/{YYYY-MM}/replace` → per-category `CREATE` or `UPDATE` entries. `/replace` cannot legitimately remove a row (replace-all requires every existing row in the body), so it never produces `DELETE` entries. Budget row deletions happen through three other paths and are logged differently: `/pin` with `amount: null` writes an `UNPIN` entry per cleared pin; deactivation that drops future pins writes an `UNPIN` entry per drop; hard delete cascades through every row for the category and writes a single `CATEGORY_HARD_DELETE` entry.
-- `POST /api/budget/{YYYY-MM}/pin` → per-category `PIN` or `UNPIN` entries.
-- `POST /api/categories/{id}/deactivate` when `confirm: true` and `affectedMonths` is non-empty → one `UNPIN` entry per dropped pin. This keeps the budget-target audit log complete even when pins are dropped indirectly. The deactivation itself produces no entry.
-- `DELETE /api/categories/{id}` → a single `CATEGORY_HARD_DELETE` entry. This is an exception to the "category lifecycle is not audited" rule because hard delete is irreversible and destroys historical data; the entry is the only remaining trace of the category and the action.
+- `POST /api/budget/{YYYY-MM}/replace` → one `CREATE` or `UPDATE` entry for each category.
+  `/replace` cannot remove a row by any correct use, because the body must hold every row that
+  exists. It therefore never makes a `DELETE` entry. Three other paths delete a budget row, and
+  each writes a different entry: `/pin` with `amount: null` writes one `UNPIN` entry for each pin
+  it clears; a deactivation that drops a future pin writes one `UNPIN` entry for each drop; and a
+  hard delete removes every row for the category and writes one `CATEGORY_HARD_DELETE` entry.
+- `POST /api/budget/{YYYY-MM}/pin` → one `PIN` or `UNPIN` entry for each category.
+- `POST /api/categories/{id}/deactivate`, when `confirm` is `true` and `affectedMonths` holds at
+  least one month → one `UNPIN` entry for each pin it drops. The budget-target audit log therefore
+  stays complete, even when the app drops a pin as a side effect. The deactivation itself makes no
+  entry.
+- `DELETE /api/categories/{id}` → one `CATEGORY_HARD_DELETE` entry. This breaks the rule that the
+  app does not audit the life cycle of a category. It breaks it because no one can undo a hard
+  delete, and the delete destroys historical data. The entry is then the only trace left of the
+  category and of the action.
 
 ### Audit entry `changes` payload
 
-The `changes` field on a `BudgetAuditLog-{stage}` row is action-shaped:
+The shape of the `changes` field on a `BudgetAuditLog-{stage}` row depends on the action:
 
-- `CREATE` (a new Budget row was written via `/replace`): `{amount: {before: null, after: number | null}}`.
-- `UPDATE` (an existing Budget row's amount was changed via `/replace`): `{amount: {before: number | null, after: number | null}}`.
-- `PIN` (a future pin was written via `/pin`, either new or replacing an existing pin): `{amount: {before: number | null, after: number}}` where `before` is `null` if there was no prior pin at this `(yearMonth, categoryId)`.
-- `UNPIN` (a future pin was cleared, either via `/pin` with `amount: null` or via deactivation dropping pins): `{amount: {before: number, after: null}}`.
-- `CATEGORY_HARD_DELETE`: `{budgetRowsDeleted: number, transactionsDeleted: number, name: string}` (a flat counts/snapshot payload, not a before/after diff — the category and its data no longer exist).
+- `CREATE` — `/replace` wrote a new Budget row.
+  `{amount: {before: null, after: number | null}}`.
+- `UPDATE` — `/replace` changed the amount on a Budget row that existed.
+  `{amount: {before: number | null, after: number | null}}`.
+- `PIN` — `/pin` wrote a future pin. The pin is new, or it takes the place of one that existed.
+  `{amount: {before: number | null, after: number}}`. `before` is `null` if no pin was there for
+  this `(yearMonth, categoryId)`.
+- `UNPIN` — a future pin is gone. Either `/pin` with `amount: null` cleared it, or a deactivation
+  dropped it. `{amount: {before: number, after: null}}`.
+- `CATEGORY_HARD_DELETE` — `{budgetRowsDeleted: number, transactionsDeleted: number, name: string}`.
+  This holds counts and a snapshot, and not a before-and-after pair, because the category and its
+  data are gone.
 
 ### Audit entry `override` field
 
-The `override` boolean indicates the entry was produced by an action that required admin privileges. Specifically: `override=true` when (a) the request was submitted with `"override": true` and the JWT carried the admin group claim, or (b) the action is intrinsically admin-only and has no override flag — `CATEGORY_HARD_DELETE` is the only case in this category. `override=false` for all routine, non-admin mutations. The Audit Log page surfaces this flag prominently so audit reviewers can filter to "everything that required admin."
+The `override` boolean shows that the entry came from an action that needed admin rights. It is
+`true` in two cases. First, the request carried `"override": true` and the JWT carried the admin
+group claim. Second, only an admin can do the action, and the action has no override flag.
+`CATEGORY_HARD_DELETE` is the only action of the second kind. It is `false` for every normal change
+by a user who is not an admin. The Audit Log page shows this flag clearly, so that a reviewer can
+select everything that needed an admin.
 
 ### Audit user identity
 
@@ -374,41 +473,73 @@ user: {
 }
 ```
 
-All three fields are read from the JWT claims at request time (`sub`, `email`, `cognito:username`) and written verbatim into the entry. The snapshot semantics matter: if the user later changes their email or Cognito username, the audit log still shows whatever value was in effect when the action was performed. This matches the historical-record nature of the log. `sub` is the only field guaranteed to identify the same human across changes; the other two are intentionally allowed to drift on the live user record.
+The app reads all three fields from the JWT claims at the time of the request — `sub`, `email`, and
+`cognito:username` — and writes them into the entry exactly as they are. This snapshot matters. If
+the user later changes their email or their Cognito username, the audit log still shows the value
+that was in use at the time of the action. That fits the purpose of the log, which is a historical
+record. `sub` is the only field that always points to the same person. The other two may change on
+the live user record, and that is intended.
 
-The Audit Log page renders entries using `email` as the primary display label (with a hover/tooltip showing the `sub` and `username` for disambiguation if needed).
+The Audit Log page shows `email` as the main label for each entry. A hover shows the `sub` and the
+`username`, to tell two similar entries apart.
 
-Not recorded:
+The app does not record these:
 
-- Transaction mutations (insert/update/delete/commit), even when performed via override. The accepted trade-off: an override-driven edit to a transaction in a locked month leaves no direct audit trail. This is acceptable because (a) budget-target history is the primary need, and (b) the locked-month summary still reflects the new transaction state, so override-driven mutations are visible by inspection of the historical view itself.
-- Category creation, renames, and reactivation. Each of these can be undone or re-derived from the current Category row, so a direct audit entry offers little forensic value.
-- Deactivation as such — there is no "category was deactivated" entry. (Deactivation does, however, produce one `UNPIN` entry per dropped pin, as noted above; those entries cover the *budget-target* changes triggered indirectly. The deactivation itself remains uncaptured.)
+- A change to a transaction — an insert, an update, a delete, or a commit — even through the
+  override. This is an accepted trade-off. An override change to a transaction in a locked month
+  leaves no direct trace. It is acceptable for two reasons. First, the history of the budget
+  targets is what matters most. Second, the summary for a locked month still shows the new state of
+  the transactions, so a person can find the change by a look at the historical view.
+- The creation, the rename, and the reactivation of a category. A person can undo each of these, or
+  work each one out from the current Category row, so an entry would add little.
+- The deactivation itself. There is no "the app deactivated this category" entry. A deactivation
+  does write one `UNPIN` entry for each pin it drops, as above. Those entries cover the changes to
+  the *budget targets* that follow from it. The deactivation itself stays unrecorded.
 
 ### Historical fidelity
 
-A year-month becomes locked once its grace period expires. The Budget table rows and Transactions table rows for a locked year-month are immutable except via admin override; the override path is audited. The summary endpoint for a locked month therefore reads the same values 20 years from now as it did the day the month locked, with the audit log explaining any override-driven divergences.
+A year-month locks at the end of its grace period. After that, no one can change its rows in the
+Budget table or in the Transactions table, except through the admin override. The app audits the
+override path. So the summary endpoint for a locked month returns the same values in 20 years as
+it did on the day the month locked. The audit log explains any difference that an override made.
 
-The summary endpoint determines which categories to include per **Spec 5**:
+The summary endpoint chooses its categories as **Spec 5** states:
 
-- **Editable year-months** — currently active categories, plus any category (active or inactive) referenced by at least one transaction with `amount != 0` in that month. Per the signed-amount convention, this includes pure-income/return-only categories (sum-of-amounts negative) as well as expense categories — anything with non-zero financial activity.
-- **Locked year-months** — every category referenced by a budget row (regardless of amount; `$0` counts as a target, missing row means no target) or a transaction in that month, regardless of current `active` flag. Because past budget rows are never deleted when a category is deactivated, presence of a row in the Budget table for that month is the historical signal — no separate snapshot is needed.
+- **An editable year-month** — the categories that are active now, and any category, active or
+  not, with at least one transaction in that month whose `amount` is not 0. Because an amount
+  carries a sign, this covers a category with income or returns only, where the amounts add up to
+  a negative number. It covers any category with money movement of any kind.
+- **A locked year-month** — every category with a budget row in that month, whatever the amount,
+  and every category with a transaction in that month. Here `$0` counts as a target, and no row
+  means no target. The current `active` flag does not matter. The app never deletes a past budget
+  row when a category is deactivated, so a row in the Budget table for that month is the
+  historical signal. No separate snapshot is necessary.
 
 ### Display names on locked months
 
-For locked-month summary responses, the category name returned for each row is resolved against `Category.nameHistory`:
+For a summary of a locked month, the app finds the name of each category in `Category.nameHistory`:
 
-1. Compute `month_end_utc` = the instant 23:59:59.999999 on the last calendar day of the requested year-month in `BUDGET_TZ`, converted to UTC. (Example: for `2024-03`, this is `2024-03-31T23:59:59.999999-04:00` (EDT) → `2024-04-01T03:59:59.999999Z`.)
-2. Find the earliest entry in `nameHistory` whose `replacedAt` (ISO-8601 UTC) is **strictly greater than** `month_end_utc`.
-3. If such an entry exists, that entry's `previousName` was the name in effect during that month; return it as `historicalName` alongside the current `name`. The frontend renders the pair as e.g. `Groceries (renamed to: Food)`.
-4. If no such entry exists, the current `name` was already in effect during that month; return only `name` with `historicalName: null`.
+1. Compute `month_end_utc`. This is the instant 23:59:59.999999 on the last day of the year-month
+   in `BUDGET_TZ`, converted to UTC. For `2024-03` it is `2024-03-31T23:59:59.999999-04:00` in EDT,
+   which is `2024-04-01T03:59:59.999999Z`.
+2. Find the first entry in `nameHistory` whose `replacedAt`, an ISO-8601 UTC time, is **later than**
+   `month_end_utc`. It must be later, and not equal.
+3. If such an entry exists, its `previousName` was the name in use during that month. Return it as
+   `historicalName`, next to the current `name`. The frontend then shows the pair, such as
+   `Groceries (renamed to: Food)`.
+4. If no such entry exists, the current `name` was already in use during that month. Return only
+   `name`, and set `historicalName` to `null`.
 
-The DST-aware conversion in step 1 matters at month boundaries near DST transitions — the cutoff has to use the offset in effect on the last day of the year-month, not a fixed offset.
+Step 1 must use the daylight saving offset of the last day of that year-month, and not a fixed
+offset. This matters at a month boundary near a daylight saving change.
 
-Editable-month responses always return only the current `name` since no rename can have post-dated an editable month while it remains editable.
+A response for an editable month always returns the current `name` only. No rename can come after
+an editable month while that month is still editable.
 
 ### Replace write semantics
 
-`POST /api/budget/{YYYY-MM}/replace` writes a dense year-month (the current month, the previous month while in grace, or — via admin override — any locked month). Body:
+`POST /api/budget/{YYYY-MM}/replace` writes a dense year-month. That is the current month, the
+previous month while it is in grace, or any locked month through the admin override. The body:
 
 ```
 {
@@ -418,19 +549,28 @@ Editable-month responses always return only the current `name` since no rename c
 }
 ```
 
-Replace-all semantics. The handler validates in this order:
+This endpoint replaces every row. The handler checks the request in this order:
 
-1. **Editability** (per **Enforcement** table). If `{YYYY-MM}` is not writable (and no effective override), the handler returns `409` with the editability error and stops — body validation is not run.
-2. **Body completeness:**
-   - Every category referenced by any existing budget row for that month must be present in the body, even if its amount is unchanged.
-   - Every category referenced by a non-zero transaction in that month must be present in the body.
+1. **Editability**, as the **Enforcement** table states. If the app cannot write `{YYYY-MM}`, and no
+   override applies, the handler returns `409` with the editability error and stops. It does not
+   check the body.
+2. **A complete body:**
+   - The body must hold every category with a budget row in that month, even if its amount does
+     not change.
+   - The body must hold every category with a transaction in that month whose amount is not zero.
 
-If either body-completeness constraint is violated (and editability passed), the response is `409 Conflict` with a body listing the missing `categoryId`s, and **no rows are written**. The client is expected to re-issue with the missing entries included (typically copying their existing values).
+If the body fails either rule, and editability passed, the response is `409 Conflict`. The body
+lists each `categoryId` that is absent, and the app **writes no rows**. The client must send the
+request again with those entries added. Usually it copies the values that exist.
 
-`amount: number` → row is written with that amount (including `0`, which is a valid explicit target).
-`amount: null` → row is written with `amount=null` (semantically "no target"; the row stays in the table to preserve density).
+`amount: number` → the app writes the row with that amount. `0` is valid, and it is a real target.
+`amount: null` → the app writes the row with `amount=null`. That means "no target". The row stays
+in the table, so the month stays dense.
 
-Every diff produces a per-category `CREATE` or `UPDATE` entry in the audit log. `/replace` never produces `DELETE` entries: the body validation rule prevents row removal by omission, and rows whose amount becomes `null` are still kept as rows (so they UPDATE, they don't DELETE).
+Each difference makes one `CREATE` or `UPDATE` entry in the audit log, for one category.
+`/replace` never makes a `DELETE` entry. The body rule stops a client from removing a row by
+leaving it out, and a row whose amount becomes `null` is still a row. Such a row gives an `UPDATE`,
+and not a `DELETE`.
 
 ### Pin write semantics
 
@@ -444,12 +584,14 @@ Every diff produces a per-category `CREATE` or `UPDATE` entry in the audit log. 
 }
 ```
 
-Upsert semantics — categories omitted from the body are not touched.
+This endpoint writes a row, or changes the row that is there. It does not touch a category that the
+body leaves out.
 
-`amount: number` → upserts an explicit pin row at the given amount.
-`amount: null` → **deletes** the pin row if it exists (no row at all means "no pin," and display falls back to walk-back).
+`amount: number` → the app writes a pin row at that amount, or changes the row that is there.
+`amount: null` → the app **deletes** the pin row, if one exists. No row means no pin, and the
+display then walks back to find a value.
 
-The response includes warning payloads per category:
+For each category, the response holds a warning:
 
 ```
 {
@@ -465,80 +607,157 @@ The response includes warning payloads per category:
 }
 ```
 
-- **downstreamPins** — for each category in the request, lists other pins for the same category in months strictly later than the edited month (within the editable window). The frontend surfaces these so the user can clear them in a follow-up call if desired. (Spec 19.)
-- **pinMatchesCarriedValue** — for each category where the new pin amount equals the value that would have been resolved via walk-back without the pin. The frontend warns the user that they're effectively pinning the current carried value, which will block propagation. (Spec 20.)
+- **downstreamPins** — for each category in the request, this lists the other pins for that same
+  category in months later than the month the user changed, inside the editable range. The
+  frontend shows them, so that the user can clear them in a second call. (Spec 19.)
+- **pinMatchesCarriedValue** — this appears for each category where the new pin amount equals the
+  value that the walk-back would give without the pin. The frontend then warns the user. The user
+  is pinning the value that is there already, and that stops it from moving ahead later. (Spec 20.)
 
-Every pin/unpin produces a `PIN` or `UNPIN` entry in the audit log.
+Each pin and each unpin makes a `PIN` or an `UNPIN` entry in the audit log.
 
 ## Carry-Forward
 
 ### Storage model: dense vs. sparse
 
-The Budget table holds **explicit edits and densified rows only**:
+The Budget table holds two kinds of row only: a row the user wrote, and a row the app made dense.
 
-- **Locked, grace, and current year-months are always *dense*** — they contain exactly one row per category that existed at densification time, plus any explicit edits made after. A row may carry `amount=null` (explicit "no target"); the row's existence is what matters for density.
-- **Future year-months are *sparse*** — they contain only rows the user has explicitly pinned via `POST /api/budget/{YYYY-MM}/pin`. Categories without a pin have no row at all.
+- **A locked month, a grace month, and the current month are always *dense*.** Each holds exactly
+  one row for each category that existed when the app made the month dense, and any row the user
+  wrote after that. A row may hold `amount=null`, which means "no target". For density, only the
+  row itself counts.
+- **A future month is *sparse*.** It holds only the rows the user pinned, through
+  `POST /api/budget/{YYYY-MM}/pin`. A category without a pin has no row at all.
 
-This split has three consequences worth stating explicitly:
+This split has three results, and each is worth a clear statement:
 
-1. **Locked-month displays never walk back.** The dense row set written during the month's densification (whether by the scheduled cron at rollover or by lazy walk-forward later) is the historical record. Edits to prior locked months via admin override cannot retroactively change the display of a later locked month.
-2. **Future-month edits are surgical.** Setting `December 2026 ABC = $2000` writes one row. `DEF` does not get a row in December until either (a) the user pins it explicitly or (b) December rolls over and is densified.
-3. **Display of a future month is resolved per category.** For each currently-active category: if there's an explicit pin at `(future_ym, category)`, use it. Otherwise walk back month-by-month (no fixed depth — sweep until you find a row or exhaust history) and use the most recent row's amount. If nothing is ever found, the category has no target.
+1. **A locked month never walks back.** The dense set of rows is the historical record. The app
+   writes that set when it makes the month dense, either by the cron job at the month change, or
+   later when it catches up. A change to an earlier locked month, through the admin override,
+   cannot change what a later locked month shows.
+2. **A change to a future month touches one row.** To set `December 2026 ABC = $2000` writes one
+   row. `DEF` gets no row in December until the user pins it, or until December arrives and the app
+   makes the month dense.
+3. **The app resolves a future month one category at a time.** For each category that is active
+   now: if a pin exists at `(future_ym, category)`, use it. If not, walk back one month at a time,
+   with no fixed limit, until a row appears or the history ends. Then use the amount on the row it
+   found. If it finds no row at all, the category has no target.
 
 ### Densification
 
-Densification is the act of converting the current year-month from sparse to dense. It runs in two places:
+To densify is to change the current year-month from sparse to dense. This happens in two ways:
 
-**Scheduled (eager).** EventBridge Scheduler triggers a Lambda at `0 0 1 * ? *` with `ScheduleExpressionTimezone: "America/New_York"` (i.e., midnight ET on day 1 of each month). The job is idempotent; running it twice is a no-op.
+**On a schedule.** EventBridge Scheduler starts a Lambda at `0 0 1 * ? *`, with
+`ScheduleExpressionTimezone: "America/New_York"`. That is midnight ET on day 1 of each month. The
+job is idempotent, so a second run does nothing.
 
-**Lazy (fallback).** If the scheduled job hasn't yet run for a year-month (or failed, or the user accesses the system after a long absence), densification runs inline on the next budget-related request. The triggers are: any `GET /api/budget/{yearMonth}` (regardless of which yearMonth is requested), any `GET /api/summary?month={yearMonth}`, or any budget write (`/replace`, `/pin`, `POST /api/categories`). The handler always brings the table up to the current `current_ym` before serving the request — even if the caller asked for a past or future month, current must be dense first so walk-back resolution and walk-forward bookkeeping stay correct. If lazy hydration runs during a request, the request waits for it to finish before returning.
+**On demand, as a fallback.** The scheduled job may not have run for a year-month. It may have
+failed, or the user may return after a long time away. The app then densifies during the next
+request about the budget. Four requests start it: any `GET /api/budget/{yearMonth}`, whichever
+month the caller asks for; any `GET /api/summary?month={yearMonth}`; and any budget write, through
+`/replace`, `/pin`, or `POST /api/categories`. The handler always brings the table up to
+`current_ym` before it answers. This holds even when the caller asks for a past or a future month.
+The current month must be dense first, or the walk-back and the walk-forward give wrong results.
+When this runs during a request, the request waits for it to finish.
 
 ### Walk-forward through missed months
 
-When densification runs, it computes the set of year-months between `M_last` (the most recent already-dense year-month) and `current_ym` (the year-month containing now-ET). For each `M` in that range, in chronological order:
+The app first finds the year-months between `M_last` and `current_ym`. `M_last` is the most recent
+month that is dense already. `current_ym` is the month that holds now, in ET. It then takes each
+month `M` in that range, oldest first:
 
-1. For each currently-active category:
-   - If `(M, categoryId)` already has a row (an explicit pin written earlier), skip.
-   - Otherwise, walk back from `M - 1` through `M_last` looking for the most recent row for that `categoryId`. Copy its `amount` (which may be `null`).
-   - If no prior row exists anywhere, write a row with `amount=null`.
-2. Inactive categories are not added. Explicit pins on inactive categories that already exist at `M` are left in place (the user may re-activate or just want to track them historically).
+1. For each category that is active now:
+   - If a row exists at `(M, categoryId)`, from a pin the user wrote earlier, leave it.
+   - If not, walk back from `M - 1` to `M_last`, and find the most recent row for that
+     `categoryId`. Copy its `amount`, which may be `null`.
+   - If no earlier row exists anywhere, write a row with `amount=null`.
+2. The app adds no inactive category. It leaves in place a pin on an inactive category that exists
+   already at `M`. The user may make the category active again, or may want the history.
 
-**Cold-start case (no prior dense month exists).** When `M_last` is undefined — the Budget table has zero rows — densification has nothing to walk back to. In that case, only `current_ym` is densified: for each currently-active category, write a row with `amount=0`. This should virtually never happen in normal operation (a fresh deploy with categories already created, before any user has loaded a budget page). If it does happen for any other reason, `$0` is a safe starting baseline that the user can edit normally.
+**The cold start, when no dense month exists.** `M_last` has no value when the Budget table is
+empty, so there is nothing to walk back to. The app then densifies `current_ym` only: it writes a
+row with `amount=0` for each category that is active. This is almost impossible in normal use. It
+needs a new deploy, with categories made already, and before anyone opens a budget page. If it does
+happen, `$0` is a safe start, and the user can change it in the usual way.
 
-Iterating forward (rather than collapsing to one walk-back from `current_ym`) ensures intermediate months become dense in their own right, which preserves historical fidelity if any of them later get inspected as a locked month.
+The app moves forward one month at a time. It does not collapse the work into one walk-back from
+`current_ym`. Each month between therefore becomes dense on its own, and the history stays true if
+someone looks at one of those months later, as a locked month.
 
-**Implementation note — bulk-fetch the lookback window.** Both densification and future-month display walk back through Budget rows category-by-category, month-by-month. Implemented naively this is `O(categories × months)` round-trips. The handler should instead issue one `BatchGetItem` (or a small number of `Query`s on the relevant `yearMonth` partitions) up front to load the entire `[M_last, current_ym + N_FUTURE_MONTHS]` window into a Python `dict[(yearMonth, categoryId), amount]`, then resolve every walk-back via in-memory lookups. This applies equally to:
+**A note for the implementation: get the whole range in one call.** Both the densify step and the
+display of a future month walk back through Budget rows, one category and one month at a time. The
+simple way to write this makes `O(categories × months)` calls. Instead, the handler must first load
+the whole `[M_last, current_ym + N_FUTURE_MONTHS]` range in one `BatchGetItem`, or in a few
+`Query` calls on the `yearMonth` partitions. It puts the result in a Python
+`dict[(yearMonth, categoryId), amount]`, and then does every walk-back in memory. This applies to
+both of these:
 
-- Densification at rollover (walking back from each `M` looking for prior rows).
-- `GET /api/budget/{future_ym}` and `GET /api/summary?month={future_ym}` (walking back per active category to compute effective targets).
+- The densify step at the month change, which walks back from each `M` to find an earlier row.
+- `GET /api/budget/{future_ym}` and `GET /api/summary?month={future_ym}`, which walk back for each
+  active category to find the target.
 
 ### Category lifecycle hooks
 
-- **Create** (`POST /api/categories`) — body must include a non-zero, non-negative `initialTarget`. The handler first triggers lazy hydration if `current_ym` is not yet dense, then writes a row at `(current_ym, newCategoryId, initialTarget)` so the new category appears in Spec-1-style summaries right away. The new category's row participates in any subsequent walk-back for future months (so a freshly-created category with `initialTarget=$50` will show `$50` as the carried value for all future editable months until the user pins something different).
-- **Deactivate** (`POST /api/categories/{id}/deactivate`) — returns `affectedMonths: [{yearMonth, amount}]` listing every **future** month with an explicit pin for this category. With `confirm: true`, the deactivation transaction batch-deletes those future pins AND writes one `UNPIN` audit entry per dropped pin (preserving the budget-target audit trail; see **Audit scope**). Past dense rows (current/grace/locked) are left alone, preserving Spec 2's historical fidelity.
-- **Reactivate** (`POST /api/categories/{id}/reactivate`) — flips the flag. Future pins dropped during the prior deactivation are not restored. The category re-enters the active set, so the next densification (or any current-month write) treats it like a freshly-created one for that month.
+- **Create** (`POST /api/categories`) — the body must hold an `initialTarget` that is not zero and
+  not negative. If `current_ym` is not dense, the handler densifies it first. It then writes a row
+  at `(current_ym, newCategoryId, initialTarget)`, so that the new category appears at once in a
+  summary of the kind Spec 1 describes. That row then takes part in a later walk-back for a future
+  month. A new category with `initialTarget=$50` therefore shows `$50` in every future editable
+  month, until the user pins a different amount.
+- **Deactivate** (`POST /api/categories/{id}/deactivate`) — this returns
+  `affectedMonths: [{yearMonth, amount}]`. It lists every **future** month with a pin for this
+  category. With `confirm: true`, the transaction deletes those future pins, and it writes one
+  `UNPIN` audit entry for each pin it drops. The budget-target audit trail therefore stays
+  complete — see **Audit scope**. The app leaves the past dense rows as they are, in the current
+  month, the grace month, and every locked month. The history therefore stays true, as Spec 2
+  requires.
+- **Reactivate** (`POST /api/categories/{id}/reactivate`) — this changes the flag back. It does not
+  restore a future pin that the deactivation dropped. The category joins the active set again. The
+  next densify step, or any write to the current month, then treats it like a new category for
+  that month.
 
 ### Edge cases
 
-- **New category, no prior history.** Densification finds no row to walk back to and writes `amount=null`. The category appears in the current month with no target; the user must explicitly set one.
-- **Pin equals carried value.** Allowed but warned (see Pin write semantics, `pinMatchesCarriedValue`). Server writes the pin as requested.
-- **Pin survives rollover.** When a pinned future month becomes current, densification finds the explicit pin already in place and skips it. The pin becomes a regular dense row going forward.
-- **Pin on a category that gets deactivated before the future month arrives.** Per the deactivate flow above, the pin is deleted at deactivation time. If the user skipped the confirm prompt somehow (e.g., direct API call) and the pin survives, densification at the future month's rollover ignores it (inactive categories aren't densified). While the month is editable, the orphan pin is invisible to summary views (Spec 5 editable-month rule shows only active categories + categories with transactions). Once that month locks, Spec 5's locked-month rule applies and the orphan budget row resurfaces in the summary with `$0` actuals. To remove it for good, either reactivate the category and follow the normal deactivate flow, or hard-delete the category.
-- **Concurrent edits across tabs.** Last write wins. No ETag/version checking. Acceptable for single-household use.
+- **A new category, with no history.** The densify step finds no row to walk back to, so it writes
+  `amount=null`. The category then appears in the current month with no target, and the user must
+  set one.
+- **A pin equal to the value that carries forward.** The app permits this, and it warns the user.
+  See **Pin write semantics** and `pinMatchesCarriedValue`. The server writes the pin as asked.
+- **A pin stays through the month change.** When a pinned future month becomes the current month,
+  the densify step finds the pin already in place, and leaves it. The pin is then a normal dense
+  row.
+- **A pin on a category that the user deactivates before the future month arrives.** The
+  deactivation deletes the pin, as above. The pin can survive if the user got past the confirm
+  step, for example by a direct call to the API. The densify step then ignores it when that month
+  arrives, because the app does not densify an inactive category. While the month stays editable,
+  no summary shows the lost pin. The Spec 5 rule for an editable month shows only the active
+  categories, and the categories with transactions. When that month locks, the Spec 5 rule for a
+  locked month applies, and the lost budget row appears in the summary with `$0` of actuals. To
+  remove it for ever, make the category active again and deactivate it in the normal way, or hard
+  delete the category.
+- **Two tabs that change the same thing.** The last write wins. There is no ETag and no version
+  check. This is acceptable for one household.
 
 ## Hard delete semantics
 
-`DELETE /api/categories/{id}` is semantically distinct from deactivation and is the only category-lifecycle operation that is destructive, irreversible, and audited. It exists for the case where a category was created in error and should not exist in any historical record — not for the case of "I no longer want to budget this," which is what deactivation is for.
+`DELETE /api/categories/{id}` means something different from a deactivation. Of all the operations
+on the life of a category, it is the only one that destroys data, that no one can undo, and that
+the app audits. Use it when someone made a category by mistake, and it must not appear in any
+historical record. Do not use it for "I no longer want to budget this". Deactivation is for that.
 
 ### Access
 
-Admin-only. The handler verifies the `budget-admin-{stage}` claim on every call. There is no `override` flag — admin status alone is required.
+Only an admin can do this. The handler checks the `budget-admin-{stage}` claim on each call. There
+is no `override` flag. The admin group alone gives the right.
 
-The frontend does not surface hard delete on the standard `CategoriesPage`. It lives behind a separate admin tools route that is only rendered when the JWT carries the `budget-admin-{stage}` claim.
+The frontend does not show the hard delete on the normal `CategoriesPage`. It sits behind a
+separate admin tools route. The app draws that route only when the JWT carries the
+`budget-admin-{stage}` claim.
 
 ### Pre-flight (dry run)
 
-`GET /api/categories/{id}?deletion_preview=true` returns the impact summary without making any changes:
+`GET /api/categories/{id}?deletion_preview=true` returns a summary of the effect. It changes
+nothing:
 
 ```
 {
@@ -553,7 +772,8 @@ The frontend does not surface hard delete on the standard `CategoriesPage`. It l
 }
 ```
 
-The admin tools UI requires the admin to view this preview before the destructive call is allowed.
+The admin tools page makes the admin read this preview first. Only then does it permit the call
+that destroys the data.
 
 ### Destructive call
 
@@ -566,38 +786,62 @@ Body: {
 }
 ```
 
-Handler behavior:
+What the handler does:
 
-1. Verify `budget-admin-{stage}` claim. Else `403`.
-2. Verify `confirm=true`, `confirmName` matches the current `Category.name`, and `explanation` is non-empty. Else `400`.
-3. In a single conceptual operation:
-   a. Scan-and-delete every Budget row with `categoryId = id` across all year-months.
-   b. Scan-and-delete every Transaction row with `categoryId = id` across all year-months.
+1. It checks the `budget-admin-{stage}` claim. If the claim is absent, it returns `403`.
+2. It checks three things: `confirm` is `true`, `confirmName` equals the current `Category.name`,
+   and `explanation` is not empty. If any check fails, it returns `400`.
+3. It then does these four steps as one operation:
+   a. Find and delete every Budget row with `categoryId = id`, in all year-months.
+   b. Find and delete every Transaction row with `categoryId = id`, in all year-months.
    c. Delete the Category row.
-   d. Write one `CATEGORY_HARD_DELETE` audit entry into the single-partition audit table: `PK="AUDIT"`, `sortId=<new ULID>`, `changedAt` set to now in UTC, `effectiveYearMonth=null`, `categoryId=id`, `explanation`, `user={sub, email, username}`, `override=true` (per the "intrinsically admin-only" rule in **Audit entry `override` field**), `changes={budgetRowsDeleted: N, transactionsDeleted: M, name: previousName}`.
-4. Return `200` with the deletion counts.
+   d. Write one `CATEGORY_HARD_DELETE` entry into the audit table, which has one partition. Set
+      `PK="AUDIT"`, `sortId` to a new ULID, `changedAt` to now in UTC, `effectiveYearMonth` to
+      `null`, `categoryId` to `id`, and also `explanation` and `user={sub, email, username}`. Set
+      `override=true`, because only an admin can do this — see **Audit entry `override` field**.
+      Set `changes={budgetRowsDeleted: N, transactionsDeleted: M, name: previousName}`.
+4. It returns `200`, with the counts.
 
-DynamoDB does not provide cross-table atomicity here; the operation is best-effort sequential. If any sub-step fails after others succeeded, the audit entry is written last so its presence implies (modulo manual intervention) the cascade completed. If the audit entry write fails, the admin is notified and the partial state must be reconciled manually.
+DynamoDB cannot make these steps atomic across tables. The handler therefore runs them in order,
+and each one may fail. It writes the audit entry last, on purpose. If that entry exists, the whole
+cascade finished, unless someone changed the data by hand. If the write of the audit entry itself
+fails, the app tells the admin, and someone must repair the state by hand.
 
 ### Effects on history
 
-Hard delete intentionally violates Spec 2 for the deleted category:
+A hard delete breaks Spec 2 for that category, and it does so on purpose:
 
-- **Locked-month summaries** that previously included this category will no longer include it. Total actuals for those months will decrease by the deleted transactions' amounts. This is by design — the admin has stated the category should never have existed.
-- **Audit log entries** that referenced the deleted `categoryId` (e.g., a past `CREATE`/`UPDATE`/`PIN` entry on that category) are not deleted. The category name will not resolve, so the UI renders them as `<deleted category {id}>` with a tooltip showing the original `Category.name` from the `CATEGORY_HARD_DELETE` audit entry's `changes.name` field.
-- **Transactions in locked months** are deleted; this is the most aggressive part of the cascade and the main reason hard delete is reserved for "this category never should have existed."
+- **A summary of a locked month** that held this category no longer holds it. The total actuals for
+  those months fall by the amounts of the deleted transactions. This is the design. The admin has
+  said that the category should never have existed.
+- **An audit log entry** that names the deleted `categoryId` stays. This includes a past `CREATE`,
+  `UPDATE`, or `PIN` entry for that category. The app can no longer find the name, so the UI shows
+  `<deleted category {id}>`. A hover shows the original `Category.name`, which the app reads from
+  the `changes.name` field of the `CATEGORY_HARD_DELETE` entry.
+- **A transaction in a locked month** is deleted. This is the hardest part of the cascade. It is
+  also the main reason to keep the hard delete for "this category should never have existed".
 
 ### Why not orphan transactions instead?
 
-We considered orphaning — setting `categoryId = null` on Transactions rather than deleting them — but rejected it because (a) it creates a null-category state the rest of the system has to defend against (summary aggregation, replace-all validation, etc.), and (b) it doesn't actually serve the use case. If the admin wants to keep the transactions but recategorize them, they should reassign each one to a real category first, then hard-delete an empty category. The current design forces that explicit step.
+We thought about the other way: to set `categoryId = null` on each Transaction, and to keep the
+rows. We rejected it for two reasons. First, it makes a state with no category, and then every
+other part of the app must guard against it, in the summary totals, in the `/replace` checks, and
+elsewhere. Second, it does not help the person who needs it. If the admin wants to keep the
+transactions under a different category, the admin must move each one to a real category first,
+and then hard delete a category that is empty. The present design makes that step necessary.
 
 ## Admin Operating Model
 
-This section covers the end-to-end experience of operating as admin: how admins are provisioned, how they enter admin mode in the frontend, what each mutation type looks like under admin mode, and what the admin tools page contains. The API contract for the `override` flag and the JWT claim is in **Editability and the Admin Override > Admin override** above.
+This section covers the whole experience of work as an admin. It shows how a person becomes an
+admin, how an admin turns admin mode on in the frontend, what each kind of change looks like in
+that mode, and what the admin tools page holds. For the API rules on the `override` flag and the
+JWT claim, see **Editability and the Admin Override > Admin override**, above.
 
 ### Bootstrap
 
-CDK creates the `budget-admin-{stage}` Cognito group as part of `PlatformStack` (or wherever the user pool lives). The group is **empty after deploy**. The deploy operator adds themselves (or anyone else who needs admin) via:
+The CDK makes the `budget-admin-{stage}` Cognito group in the stack that holds the user pool. The
+group is **empty after a deploy**. The person who deploys adds themselves, and anyone else who
+needs admin rights, with this command:
 
 ```
 aws cognito-idp admin-add-user-to-group \
@@ -606,32 +850,43 @@ aws cognito-idp admin-add-user-to-group \
   --group-name budget-admin-{stage}
 ```
 
-The added user must sign out and sign back in so their new JWT carries the `cognito:groups` claim. There is no in-app UI for granting or revoking admin status — adding admins is rare enough that AWS CLI is the right surface forever.
+The new admin must sign out and sign in again. The new JWT then carries the `cognito:groups` claim.
+The app has no page to give or to remove admin rights. This happens rarely, so the AWS CLI stays
+the correct tool for it.
 
 ### Session model
 
-A toggle in the app header is rendered **only when the JWT carries `budget-admin-{stage}`**. Two states: Off (default) and On.
+The app draws a toggle in the header **only when the JWT carries `budget-admin-{stage}`**. It has
+two states: Off, which is the default, and On.
 
-- **Defaults to Off** on every page load, every new tab, every sign-in. State is **per-tab**, held in `useState` only — never persisted to `localStorage`, `sessionStorage`, or cookies.
-- **No inactivity timeout.** The state persists until the user toggles it off, closes the tab, or refreshes. The visual treatment (below) is the safety mechanism.
-- Toggling between Off and On is one click in either direction; no re-authentication, no confirm dialog. The friction lives at the per-action layer.
+- **It starts Off** on each page load, in each new tab, and after each sign-in. The state belongs
+  to **one tab**. It lives in `useState` only. The app never puts it in `localStorage`, in
+  `sessionStorage`, or in a cookie.
+- **It has no timeout.** The state holds until the user turns it off, closes the tab, or reloads
+  the page. The colours below are the safeguard.
+- One click turns it on, and one click turns it off. There is no second sign-in, and no confirm
+  box. The friction belongs to each action instead.
 
 ### Visual treatment
 
 When admin mode is On:
 
-- A persistent banner spans the top of the viewport: `Admin mode active — your changes can bypass lock and grace rules. [Turn off]`.
-- The banner uses an alarm color (amber or red).
-- The header / nav strip is tinted the same color so admin mode is unmissable on every page.
+- A banner stays across the top of the window: `Admin mode active — your changes can bypass lock
+  and grace rules. [Turn off]`.
+- The banner uses a warning colour, amber or red.
+- The header and the navigation strip take the same colour. Admin mode is then clear on every page.
 - An **Admin tools** item appears in the navigation.
 
-When Off, no banner, no tinted header, no admin tools nav entry.
+When admin mode is Off, there is no banner, no colour on the header, and no admin tools item.
 
-The banner and tint are the sole safeguard against "I forgot it was on." They are intentionally aggressive.
+The banner and the colour are the only guard against "I forgot that it was on". They are strong on
+purpose.
 
 ### Per-action behavior under admin mode
 
-For each mutation type, this section documents (a) what the UI shows when admin mode is Off (the lock blocks the action), (b) what it shows when admin mode is On (the action is unblocked), and (c) whether an explanation is collected.
+For each kind of change, this section shows three things: what the UI shows when admin mode is Off
+and the lock stops the action; what it shows when admin mode is On and the action can go ahead; and
+whether the app asks for an explanation.
 
 | Action | Off (locked context) | On (admin mode) | Explanation collected |
 |--------|---------------------|-----------------|----------------------|
@@ -643,40 +898,56 @@ For each mutation type, this section documents (a) what the UI shows when admin 
 | `POST /api/transactions/commit` with any locked-month rows | Locked rows surface as inline errors; Commit button disabled. | Locked rows become inline warnings (different color). A persistent header on the review screen reads: "Committing N rows in locked months: [Mar 2024, Apr 2024] via admin override." Commit button reads "Commit (override)". | No. |
 | `DELETE /api/categories/{id}` | Not reachable from any page. | Reachable only via Admin tools. Form on its own page; not gated by the session toggle. | Yes — typed-name confirmation + required explanation, written to the `CATEGORY_HARD_DELETE` audit entry. |
 
-The asymmetry between budget targets (explanation collected) and transactions (no explanation) is a direct consequence of the audit scope decision: there's no point asking the user to type a justification that is then discarded.
+A budget target needs an explanation, and a transaction does not. This difference follows directly
+from the audit scope. It is of no use to ask the user for a reason that the app then throws away.
 
 ### Admin tools page
 
-Lives at `/admin`, rendered only when the JWT carries `budget-admin-{stage}`. Visiting `/admin` does **not** require the session toggle to be On — admin tools always have their own per-action safeguards (see **Hard delete semantics**).
+The page sits at `/admin`. The app draws it only when the JWT carries `budget-admin-{stage}`. To
+open `/admin`, the toggle does **not** need to be On. Each admin tool carries its own safeguards —
+see **Hard delete semantics**.
 
-Initial contents:
+What the page holds at the start:
 
-- **Hard delete category.** Dropdown of all categories (active + inactive). On select, fetches `GET /api/categories/{id}?deletion_preview=true` and displays the impact counts. Typed-name confirmation field + explanation field + red "Permanently delete" button.
+- **Hard delete a category.** A list of every category, active and inactive. On a choice, the page
+  calls `GET /api/categories/{id}?deletion_preview=true`, and shows the counts. It also has a field
+  for the typed name, a field for the explanation, and a red "Permanently delete" button.
 
-Reserved space for future tools (not in v1):
+Space for more tools later, but not in v1:
 
-- Manual carry-forward trigger (force-run densification of the current month).
-- Cron health (timestamp of last successful scheduled densification).
-- Raw audit log query (filter by user, date range, action).
+- A button to densify the current month by hand.
+- The health of the cron job: the time of its last good run.
+- A query on the raw audit log, by user, by date range, and by action.
 
 ### Stage isolation
 
-A user added to `budget-admin-dev` has admin access in dev only. To grant admin access in prod, the same user must be added to `budget-admin-prod` separately. This is enforced server-side: the Lambda reads its `STAGE` env var on every request and rejects override / hard-delete attempts where the JWT does not carry the stage-specific group.
+A user in `budget-admin-dev` is an admin in dev only. To make that user an admin in prod, someone
+must add them to `budget-admin-prod` as well. The server enforces this. The Lambda reads its
+`STAGE` environment variable on each request. It then rejects an override or a hard delete when the
+JWT does not carry the group for that stage.
 
-The frontend computes the same group name from a stage value injected at build time (via the existing `config.json` deploy mechanism), so the admin toggle and `/admin` route appear only when the user has the right stage-specific claim.
+The frontend builds the same group name from a stage value. The deploy puts that value into
+`config.json`. The admin toggle and the `/admin` route therefore appear only when the user holds
+the claim for that stage.
 
 ## LLM-Driven CSV Import (`budget/csv_import.py`)
 
-Two Anthropic API calls per upload, both reading the API key from SSM (`/budget/{stage}/anthropic-api-key`):
+Each upload makes two calls to the Anthropic API. Both read the API key from SSM, at
+`/budget/{stage}/anthropic-api-key`:
 
-1. **Column mapping** — given the CSV headers and ~5 sample rows, identify which columns are `date`, `description`, `amount`, and whether amounts need to be inverted (some statements use negative for purchases).
-2. **Categorization** — given all transaction descriptions and the user's active categories, assign each one to the most appropriate category.
+1. **Find the columns** — from the CSV headers and about 5 sample rows, find which column holds the
+   date, the description, and the amount. Also find whether the amounts need their sign changed,
+   because some statements use a negative number for a purchase.
+2. **Give a category** — from every transaction description, and from the categories the user has
+   active, give the best category to each row.
 
-The upload endpoint returns the parsed + categorized rows for the user to review and edit before committing.
+The upload endpoint returns the rows with their columns and categories. The user then reads them,
+changes what is wrong, and commits.
 
 ### Upload response shape
 
-`POST /api/transactions/upload` returns each parsed row alongside per-row validation annotations so the review UI can surface problems before the user clicks Commit:
+`POST /api/transactions/upload` returns each row, and a note on each row about what is wrong with
+it. The review page can then show every problem before the user clicks Commit:
 
 ```
 {
@@ -696,18 +967,25 @@ The upload endpoint returns the parsed + categorized rows for the user to review
 }
 ```
 
-The `issues` array is a closed set:
+The `issues` array holds two values, and no others:
 
-- `missing_category` — the LLM did not assign a `categoryId` (or assigned one that doesn't match an existing category). The user must pick one inline.
-- `locked_month` — the row's `transactionDate` year-month is `LOCKED` per the editability state function. The user must change the date or enable admin override.
+- `missing_category` — the LLM gave no `categoryId`, or it gave one that matches no category. The
+  user must choose one on the row.
+- `locked_month` — the year-month of `transactionDate` is `LOCKED`, as the editability function
+  says. The user must change the date, or turn on the admin override.
 
-No other issue strings are emitted by this endpoint. Parsing-level failures (malformed date, unparseable amount) cause the upload itself to fail before producing per-row results, with a top-level error describing the bad row(s).
+This endpoint sends no other issue string. A row that the app cannot read at all — a date in the
+wrong form, or an amount that is not a number — makes the whole upload fail. The app then returns
+one error at the top level, which names the bad rows.
 
-The client renders rows with non-empty `issues` as blocked until the user fixes them inline (e.g. picking a category, adjusting the date) or enables admin override. Commit is unreachable from the UI until either every row is valid or override is on.
+The client blocks any row whose `issues` array is not empty. The user must correct it on the row,
+by a choice of category or a change of date, or must turn on the admin override. The UI does not
+permit Commit until every row is valid, or until the override is on.
 
 ### CSV commit semantics
 
-Commit is atomic at the API level via `POST /api/transactions/commit`, which accepts the reviewed batch as a single request:
+`POST /api/transactions/commit` takes the whole batch in one request. At the API level, the commit
+is all or nothing:
 
 ```
 POST /api/transactions/commit
@@ -717,13 +995,23 @@ Body: {
 }
 ```
 
-Handler behavior:
+What the handler does:
 
-1. Compute `editability(row.transactionDate.yearMonth, now)` for every row.
-2. If any row is LOCKED and `override` is not effective (either not requested or the JWT lacks `budget-admin-{stage}`), the response is `409 Conflict` with a per-row error report and **zero rows are written**.
-3. If every row passes (or override is effective), insert all rows. The Transactions table writes are batched via DynamoDB `BatchWriteItem`. If a partial-write retry is exhausted, the request returns `500`. **Retry is not idempotent**: each request generates fresh ULIDs, so a client retry after a `500` may duplicate rows that the prior attempt actually persisted before the failure. This is an accepted trade-off in exchange for the simpler server design; users who hit this rare failure mode must inspect the ledger and clean up duplicates manually (potentially via admin override on locked months).
+1. It runs `editability(row.transactionDate.yearMonth, now)` for every row.
+2. If any row is LOCKED, and no override applies, the response is `409 Conflict`. It reports the
+   fault on each row, and the app **writes no rows**. An override does not apply when the client
+   did not ask for one, or when the JWT has no `budget-admin-{stage}` claim.
+3. If every row passes, or an override applies, the app writes every row. It writes to the
+   Transactions table with `BatchWriteItem`. If the retries for a part-written batch run out, the
+   request returns `500`.
 
-The previous per-row `POST /api/transactions` path remains for single-transaction inserts from the UI but is not the CSV commit path.
+**A retry is not idempotent.** Each request makes new ULIDs. So a retry after a `500` can write a
+second copy of a row that the first attempt wrote before it failed. This is an accepted trade-off,
+and it keeps the server simple. This failure is rare. A user who meets it must read the ledger and
+remove the copies by hand, and may need the admin override for a locked month.
+
+The older path, `POST /api/transactions`, stays. The UI uses it to add one transaction. It is not
+the path for a CSV commit.
 
 ## Environment Variables
 
@@ -741,42 +1029,103 @@ The previous per-row `POST /api/transactions` path remains for single-transactio
 +-----------------------------+-----------------------------------+
 ```
 
-All env vars are accessed via `get_env_var()` which raises if missing or blank.
+Every environment variable goes through `get_env_var()`. That function raises an error if the value
+is absent or blank.
 
 ## Frontend (`budget/`)
 
-React + TypeScript via Vite. Pages: `BudgetPage`, `TransactionsPage`, `CategoriesPage`, `SummaryPage`, `UploadPage`, `AuditLogPage`, `AdminToolsPage`, `CallbackPage`. Shared infrastructure: `auth.ts` (PKCE flow, single-flight refresh dedupe), `api.ts` (typed wrappers), `MonthPicker`, `LoadingOverlay`, `StatusMessage`, `DevBanner`, `AdminBanner` (the persistent banner shown when admin mode is on). Built artifacts in `budget/dist/` are deployed by the CDK stack's `BucketDeployment`, which also injects a `config.json` containing the Cognito domain, client ID, and stage at deploy time so the same bundle works across stages — the stage value is what lets the frontend compute the expected `budget-admin-{stage}` group name.
+React and TypeScript, built by Vite.
+
+The pages are `BudgetPage`, `TransactionsPage`, `CategoriesPage`, `SummaryPage`, `UploadPage`,
+`AuditLogPage`, `AdminToolsPage`, and `CallbackPage`.
+
+The shared parts are `auth.ts`, which holds the PKCE flow and permits one token request at a time,
+and `api.ts`, which holds the typed wrappers. The shared components are `MonthPicker`,
+`LoadingOverlay`, `StatusMessage`, `DevBanner`, and `AdminBanner`. `AdminBanner` is the banner that
+stays on the screen while admin mode is on.
+
+The CDK stack sends the build output to S3 with a `BucketDeployment`. That step also writes a
+`config.json` beside it, which holds the Cognito domain, the client ID, and the stage. One bundle
+therefore works in every stage. The stage value is what lets the frontend build the
+`budget-admin-{stage}` group name it expects.
 
 ### Pinned-row indicator
 
-For any year-month past the current one, summary and budget rows include a `pinned: bool` flag from the server. The frontend renders pinned rows with a distinct visual treatment (e.g. a colored dot or chip with the text "pinned") so the user can immediately see which targets are sticky vs. carried-forward (Spec 17). Once a pinned year-month rolls into current/grace/locked, the pin flag is dropped on the response — the row becomes an ordinary dense row at that point and the original pin metadata is not surfaced.
+For any year-month later than the current one, the server adds a `pinned: bool` flag to each
+summary row and each budget row. The frontend draws a pinned row differently, with a coloured dot
+or a chip that reads "pinned". The user can then see at once which targets hold, and which ones
+carry forward (Spec 17). When a pinned year-month becomes the current, grace, or locked month, the
+server stops sending the flag. The row is then a normal dense row, and the app shows nothing about
+the pin that made it.
 
-When the user submits a pin edit, the server's response includes `warnings.downstreamPins` and `warnings.pinMatchesCarriedValue`; the UI shows a dialog summarizing these and offering "Keep pins" / "Clear downstream pins" buttons before confirming the edit was successful.
+When the user saves a pin, the response holds `warnings.downstreamPins` and
+`warnings.pinMatchesCarriedValue`. The UI shows a box with these warnings, and two buttons: "Keep
+pins" and "Clear downstream pins". It reports success only after the user chooses.
 
 ### Audit log page
 
-`AuditLogPage` calls `GET /api/audit-log?limit=N` where `N` is configurable in the UI (default `10`, server cap `200`). Renders the most recent entries with per-entry `override` flag visible.
+`AuditLogPage` calls `GET /api/audit-log?limit=N`. The user sets `N` in the UI. The default is
+`10`, and the server permits no more than `200`. The page shows the most recent entries, and it
+shows the `override` flag on each one.
 
 ## Testing
 
-Python unit tests live in `lambda/tests/`. Budget-specific files: `test_budget_handler.py`, `test_budget_categories.py`, `test_budget_budget.py`, `test_budget_transactions.py`, `test_budget_summary.py`, `test_budget_audit.py`, `test_budget_csv_import.py`. All DynamoDB and Anthropic calls are mocked. Run with `uv run pytest` from `lambda/`.
+The Python unit tests are in `lambda/tests/`. These files hold the budget tests:
+`test_budget_handler.py`, `test_budget_categories.py`, `test_budget_budget.py`,
+`test_budget_transactions.py`, `test_budget_summary.py`, `test_budget_audit.py`, and
+`test_budget_csv_import.py`. Every DynamoDB call and every Anthropic call is a mock. Run
+`uv run pytest` from `lambda/`.
 
-CDK tests live in `infra/test/`. Run with `npm test` from `infra/`.
+The CDK tests are in `infra/test/`. Run `npm test` from `infra/`.
 
 ## Key Design Decisions
 
-- **Two stacks** — DynamoDB separate from the web stack so data survives app redeploys and the prod removal policy can be `RETAIN` without coupling it to the Lambda lifecycle.
-- **Amounts as integer millionths** — full precision, no floating-point drift.
-- **ULID identifiers** — sortable by creation time, opaque to URLs, no coordination needed.
-- **Sparse futures, dense current/past** — explicit pins are the only Budget rows that exist for future months; dense rows are written by densification at rollover (eager cron + lazy fallback). This keeps the future "live" (responsive to changes in prior months) while making locked months self-contained historical records that don't require walking back at display time.
-- **POST for all mutations, except hard delete** — `POST` for budget writes (`/replace`, `/pin`) and transaction writes keeps bodies intact through CloudFront and provides a uniform request shape. Hard delete on a category keeps the `DELETE` verb deliberately — its destructive, admin-only semantics deserve the verb that signals danger, even though it diverges from the convention used everywhere else.
-- **CloudFront-proxied OAuth** — Cognito hosted UI served on the app's origin so refresh requests are same-origin (no CORS).
-- **PKCE auth flow** — no client secret in the browser; tokens refreshed with deduplication on 401.
-- **LLM column mapping** — handles arbitrary bank CSV formats without per-bank parsers.
-- **Mandatory explanation on budget edits** — every change writes audit entries with a human-readable reason.
-- **Deactivate preserves history; hard delete destroys it** — these are intentionally distinct semantic operations, not two flavors of the same thing. Deactivate is the normal "I no longer want to budget this" path, preserves every Budget row and Transaction, drops future pins on confirmation, and is reversible. Hard delete is the "this category should never have existed" admin operation that cascade-deletes every Budget row and Transaction across all year-months including locked ones, writes a `CATEGORY_HARD_DELETE` audit entry, and explicitly breaks Spec 2 for the deleted category. Hard delete is gated by the `budget-admin-{stage}` group claim, requires a typed name confirmation, and lives behind an admin tools route — it is not reachable from the normal categories page.
-- **Server-computed editability** — the lock/grace state is derived from ET on every mutating request, so the client can never trick the backend into editing a locked month. The `budget-admin-{stage}` group claim is the only path that grants override, and the override flag itself is meaningless without that claim.
-- **Stage-isolated admin groups** — `budget-admin-dev` and `budget-admin-prod` are separate Cognito groups, so dev admin status cannot leak into prod even for the same human user. Deliberate friction; explicit per-stage group assignment is required.
-- **Atomic CSV commit (pre-flight only)** — the commit endpoint validates the whole batch before writing any row, so locked-month rows never sneak in. However, a partial-write failure mid-commit leaves the ledger in a partially-applied state and a client retry may dupe rows; this is the chosen trade-off vs. building deterministic batch IDs.
-- **Budget-targets-only audit log** — transaction mutations are not audited, which keeps the schema simple and matches the user's actual review workflow (historical correctness of *budget vs. actual* is the primary signal, not transaction-edit forensics).
-- **Category name history** — renames are always allowed and append to a `nameHistory` list on the category row, letting locked-month views resolve the name in effect at the time without snapshotting names onto every Budget/Transaction row.
+- **Two stacks** — The DynamoDB tables stay apart from the web stack. The data then survives a
+  deploy of the app, and the prod removal policy can be `RETAIN` without a tie to the Lambda.
+- **An amount is an integer in millionths** — Full precision, and no floating-point drift.
+- **A ULID for each identifier** — It sorts by the time of creation, it hides nothing in a URL, and
+  two writers need no agreement to make one.
+- **A sparse future, and a dense present and past** — A pin is the only Budget row that exists for
+  a future month. The densify step writes the dense rows at the month change, from the cron job or
+  from the fallback. The future therefore stays live, and it follows a change in an earlier month.
+  A locked month stays a complete record on its own, and it needs no walk-back when the app shows
+  it.
+- **`POST` for every change, except the hard delete** — `POST` for a budget write, through
+  `/replace` or `/pin`, and for a transaction write. The body then survives CloudFront, and every
+  request has one shape. The hard delete keeps the `DELETE` verb on purpose. It destroys data and
+  only an admin can do it, so it deserves the verb that shows danger, although that breaks the rule
+  used everywhere else.
+- **OAuth through CloudFront** — The Cognito hosted UI comes from the app's own origin, so a
+  request for a new token is same-origin and needs no CORS.
+- **The PKCE flow** — No client secret in the browser. On a 401 the app gets a new token, and it
+  permits only one such request at a time.
+- **An LLM finds the columns** — It reads a CSV from any bank, and the app needs no parser for each
+  one.
+- **An explanation for each budget change** — Every change writes an audit entry with a reason that
+  a person can read.
+- **Deactivation keeps the history, and a hard delete destroys it** — These are two different
+  operations, and not two forms of one. Deactivation is the normal path for "I no longer want to
+  budget this". It keeps every Budget row and every Transaction, it drops the future pins when the
+  user confirms, and the user can undo it. The hard delete is the admin operation for "this
+  category should never have existed". It deletes every Budget row and every Transaction in all
+  year-months, including the locked ones. It writes a `CATEGORY_HARD_DELETE` audit entry, and it
+  breaks Spec 2 for that category on purpose. It needs the `budget-admin-{stage}` group claim and a
+  typed name, and it sits behind the admin tools route. The normal categories page cannot reach it.
+- **The server computes editability** — The app works out the lock state and the grace state from
+  ET, on each request that changes data. A client can therefore never make the backend write to a
+  locked month. The `budget-admin-{stage}` group claim is the only way to get an override, and the
+  override flag means nothing without that claim.
+- **One admin group for each stage** — `budget-admin-dev` and `budget-admin-prod` are two separate
+  Cognito groups. An admin in dev is therefore not an admin in prod, even for the same person. This
+  friction is deliberate, and someone must add the user to each group.
+- **The CSV commit checks the whole batch first** — The endpoint checks every row before it writes
+  any row, so no row for a locked month gets in. But a failure part way through leaves the ledger
+  with some rows written, and a retry by the client can write a second copy of a row. We chose this
+  over the work to build a batch ID that makes a retry safe.
+- **The audit log holds budget targets only** — The app does not audit a change to a transaction.
+  The schema stays simple, and it matches how the user reviews the data. What matters is that
+  *budget against actual* is correct for a past month, and not a record of who edited which
+  transaction.
+- **A history of each category name** — A rename is always permitted, and it adds to the
+  `nameHistory` list on the category row. A locked month can then find the name that was in use at
+  the time. No Budget row and no Transaction row needs a copy of the name.

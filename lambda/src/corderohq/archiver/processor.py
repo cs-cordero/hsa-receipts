@@ -1,4 +1,4 @@
-"""Shared receipt processing logic used by both email and web handlers."""
+"""The shared logic that reads a receipt. Both the email handler and the web handler call it."""
 
 import logging
 from dataclasses import dataclass
@@ -29,7 +29,7 @@ class RejectionDetail:
 
 @dataclass
 class ProcessingResult:
-    """Result of processing a single attachment through the receipt pipeline."""
+    """The result after the receipt pipeline reads one attachment."""
 
     entries: list[LedgerEntry]
     rejections: list[RejectionDetail]

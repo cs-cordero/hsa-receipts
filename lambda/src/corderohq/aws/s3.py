@@ -1,4 +1,4 @@
-"""S3 operations for storing receipts and managing the ledger."""
+"""S3 operations. They store a receipt, and they read and write the ledger."""
 
 import re
 
@@ -17,7 +17,7 @@ def fetch_raw_email(bucket: str, key: str) -> bytes:
 
 
 def store_receipt(bucket: str, pdf_data: bytes, receipt_date: str, provider: str, short_description: str) -> str:
-    """Store a PDF/A receipt in S3. Returns the S3 URI.
+    """Put a PDF/A receipt in S3. Return the S3 URI.
 
     Naming: receipts/{year}/{date}_{provider}_{short_description}.pdf
     Appends _2, _3, etc. on collisions.
@@ -38,7 +38,7 @@ def store_receipt(bucket: str, pdf_data: bytes, receipt_date: str, provider: str
 
 
 def fetch_ledger(bucket: str) -> str | None:
-    """Fetch the CSV ledger from S3. Returns None if it doesn't exist yet."""
+    """Get the CSV ledger from S3. Return None if no ledger exists yet."""
     try:
         response = _S3_CLIENT.get_object(Bucket=bucket, Key=_LEDGER_KEY)
     except ClientError as e:
@@ -59,7 +59,7 @@ def store_ledger(bucket: str, ledger_data: str) -> None:
 
 
 def store_upload(bucket: str, key: str, data: bytes, content_type: str) -> None:
-    """Store an uploaded file to S3 under raw-uploads/."""
+    """Put an uploaded file in S3, under raw-uploads/."""
     _S3_CLIENT.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type)
 
 
@@ -70,7 +70,7 @@ def fetch_upload(bucket: str, key: str) -> bytes:
 
 
 def generate_presigned_receipt_url(bucket: str, key: str) -> str:
-    """Generate a presigned GET URL for a receipt PDF with inline content disposition."""
+    """Make a presigned GET URL for a receipt PDF. The browser shows it in the page."""
     return _S3_CLIENT.generate_presigned_url(
         "get_object",
         Params={
@@ -83,7 +83,7 @@ def generate_presigned_receipt_url(bucket: str, key: str) -> str:
 
 
 def list_receipt_keys(bucket: str) -> list[str]:
-    """List all S3 keys under the receipts/ prefix."""
+    """Return every S3 key under the receipts/ prefix."""
     keys: list[str] = []
     paginator = _S3_CLIENT.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket, Prefix="receipts/"):
@@ -98,7 +98,7 @@ def delete_object(bucket: str, key: str) -> None:
 
 
 def tag_raw_email(bucket: str, key: str) -> None:
-    """Tag a raw email as processed so it expires after 7 days instead of 30."""
+    """Mark a raw email as done. S3 then deletes it after 7 days, and not after 30."""
     _S3_CLIENT.put_object_tagging(
         Bucket=bucket,
         Key=key,
@@ -107,7 +107,7 @@ def tag_raw_email(bucket: str, key: str) -> None:
 
 
 def _key_exists(bucket: str, key: str) -> bool:
-    """Check if an S3 key already exists."""
+    """Return True if this S3 key exists already."""
     try:
         _S3_CLIENT.head_object(Bucket=bucket, Key=key)
     except ClientError as e:
@@ -118,6 +118,6 @@ def _key_exists(bucket: str, key: str) -> bool:
 
 
 def _sanitize(text: str) -> str:
-    """Sanitize text for use in an S3 key: replace non-alphanumeric with underscores."""
+    """Make text safe for an S3 key. Each character that is not a letter or a digit becomes an underscore."""
     sanitized = re.sub(r"[^A-Za-z0-9]+", "_", text.strip())
     return sanitized.strip("_")

@@ -1,4 +1,4 @@
-"""LLM-powered CSV parsing and transaction categorization."""
+"""An LLM reads a CSV file, and it gives a category to each transaction."""
 
 import json
 import logging

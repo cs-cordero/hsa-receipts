@@ -4,10 +4,11 @@ import type { Construct } from "constructs";
 import { ROOT_DOMAIN } from "./constants";
 
 /**
- * Single hosted zone for every corderohq.com app.
+ * The single hosted zone for every corderohq.com app.
  *
- * Deploys standalone and ahead of every other stack: the root zone must be authoritative in
- * public DNS before any ACM certificate can complete DNS validation against it.
+ * Deploy this stack on its own, and before every other stack. The root zone must be
+ * authoritative in public DNS first. Until it is, no ACM certificate can complete its DNS
+ * validation.
  *
  * AWS resources:
  * - Route 53 hosted zone: corderohq.com (registrar nameservers delegate here)
@@ -26,15 +27,15 @@ export class DnsStack extends cdk.Stack {
             zoneName: ROOT_DOMAIN,
         });
 
-        // The apex neither sends nor receives mail. Both records below are scoped to
-        // corderohq.com alone — MX and SPF are not inherited by subdomains, so the HSA receipts
-        // pipeline is unaffected: it receives at hsa.corderohq.com, which carries its own MX to
-        // SES (see HsaReceiptsStack).
+        // The apex sends no mail, and it receives none. Both records below apply to
+        // corderohq.com alone. A subdomain does not inherit an MX record or an SPF record, so
+        // this does not touch the HSA receipts pipeline. That pipeline receives at
+        // hsa.corderohq.com, which has its own MX record to SES. See HsaReceiptsStack.
         //
-        // The null MX (RFC 7505) matters because the apex now has an A record pointing at
-        // CloudFront. Without an MX record, senders fall back to delivering at the A record per
-        // RFC 5321, so mail to @corderohq.com would be attempted against CloudFront and sit in
-        // retry limbo. `MX 0 .` makes it fail immediately and unambiguously instead.
+        // The null MX (RFC 7505) matters, because the apex now has an A record that points at
+        // CloudFront. Without an MX record, a sender falls back to the A record, as RFC 5321
+        // states. Mail to @corderohq.com would then go to CloudFront, and it would stay in the
+        // retry queue. `MX 0 .` makes it fail at once, and for a clear reason.
         new route53.MxRecord(this, "ApexNullMx", {
             zone: this.rootZone,
             values: [{ priority: 0, hostName: "." }],

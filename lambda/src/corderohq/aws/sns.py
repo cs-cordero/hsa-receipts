@@ -44,7 +44,7 @@ def notify_success(entries: list[LedgerEntry]) -> None:
 
 
 def notify_failure(message: str) -> None:
-    """Publish a failure notification for processing errors."""
+    """Publish a failure notification when the app cannot read a receipt."""
     body = (
         "An error occurred while processing your receipt.\n\n"
         f"Error: {message}\n\n"
@@ -67,7 +67,7 @@ def notify_rejection(filename: str, description: str, reasoning: str) -> None:
 
 
 def notify_detailed_failure(message: str, exception: BaseException) -> None:
-    """Publish detailed failure information (including stack trace) to the detailed failures topic."""
+    """Publish the full details of a failure, with the stack trace, to the detailed failures topic."""
     tb = "".join(traceback.format_exception(type(exception), exception, exception.__traceback__))
     body = (
         f"Failure context: {message}\n\n"

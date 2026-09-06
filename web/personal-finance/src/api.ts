@@ -45,8 +45,8 @@ export class ApiError extends Error {
 async function request<T>(path: string, parse: (raw: unknown) => T, options: RequestInit = {}): Promise<T> {
     const token = await getAccessToken();
     const url = `${API_BASE}${path}`;
-    // X-Simulated-Date is a dev-only override (see simulated_date.ts). getSimulatedDate
-    // returns null outside dev mode, so prod requests never carry it.
+    // X-Simulated-Date works in dev only. See simulated_date.ts. Outside dev mode,
+    // getSimulatedDate returns null, so a prod request never carries the header.
     const simulatedDate = getSimulatedDate();
     const response = await fetch(url, {
         ...options,

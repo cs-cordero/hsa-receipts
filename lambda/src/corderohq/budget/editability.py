@@ -1,4 +1,4 @@
-"""Lock/grace/locked editability state machine for budget year-months.
+"""The state function that decides if the app can change a budget year-month.
 
 Pure functions only. No DynamoDB, no env vars.
 """

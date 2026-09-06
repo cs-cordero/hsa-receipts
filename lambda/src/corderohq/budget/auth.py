@@ -1,4 +1,4 @@
-"""JWT claim parsing for the budget app's admin override.
+"""Read the JWT claims for the admin override in the budget app.
 
 Admins are members of a stage-specific Cognito group named `budget-admin-{stage}`.
 """

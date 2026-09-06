@@ -52,7 +52,7 @@ interface PersonalFinanceWebStackProps extends cdk.StackProps {
  * - S3 bucket: personal-finance-assets-{stage}-{account}-{region} (frontend assets)
  * - CloudFront distribution: S3 origin (frontend) + API Gateway origin (/api/*) + Cognito proxy (/oauth2/*)
  * - Route 53 A record: {stage domain} → CloudFront
- * - S3 BucketDeployment: personal-finance/dist → assets bucket (CloudFront invalidation, config.json injection)
+ * - S3 BucketDeployment: web/personal-finance/dist → assets bucket (CloudFront invalidation, config.json injection)
  */
 export class PersonalFinanceWebStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props: PersonalFinanceWebStackProps) {
@@ -185,9 +185,10 @@ export class PersonalFinanceWebStack extends cdk.Stack {
     }
 
     private createScheduledDensifier(props: PersonalFinanceWebStackProps, stage: Stage): void {
-        // Dedicated Lambda for the cron path. Reuses the same code package as the
-        // API handler (bundled identically) but invokes corderohq.scheduled_densify.handler.
-        // Densification doesn't touch transactions or audit, so the IAM scope is narrower.
+        // A Lambda for the cron path only. It uses the same code package as the API handler,
+        // built in the same way, but it calls corderohq.scheduled_densify.handler. The densify
+        // step touches no transaction and no audit entry, so this Lambda needs fewer IAM
+        // permissions.
         const logGroup = new logs.LogGroup(this, "ScheduledDensifyLogGroup", {
             logGroupName: `/aws/lambda/budget-scheduled-densify-${stage}`,
             retention: logs.RetentionDays.ONE_MONTH,
@@ -225,14 +226,14 @@ export class PersonalFinanceWebStack extends cdk.Stack {
         props.categoryTable.grantReadData(densifyFn);
         props.budgetTable.grantReadWriteData(densifyFn);
 
-        // EventBridge Scheduler needs its own role to invoke the Lambda.
+        // EventBridge Scheduler needs a role of its own to call the Lambda.
         const schedulerRole = new iam.Role(this, "ScheduledDensifySchedulerRole", {
             assumedBy: new iam.ServicePrincipal("scheduler.amazonaws.com"),
         });
         densifyFn.grantInvoke(schedulerRole);
 
-        // Midnight ET on day 1 of every month. ScheduleExpressionTimezone keeps the
-        // anchor honest across DST transitions; the architecture spec requires ET.
+        // Midnight ET on day 1 of each month. ScheduleExpressionTimezone keeps the time
+        // correct through a daylight saving change. The architecture spec needs ET.
         new scheduler.CfnSchedule(this, "ScheduledDensifySchedule", {
             name: `budget-scheduled-densify-${stage}`,
             scheduleExpression: "cron(0 0 1 * ? *)",
@@ -264,10 +265,9 @@ export class PersonalFinanceWebStack extends cdk.Stack {
             defaultAuthorizer: authorizer,
         });
 
-        // Every API Gateway v2 HTTP API path must be declared explicitly — there's no
-        // catch-all behavior. If a path isn't here, API Gateway returns 404 before the
-        // Lambda dispatcher ever sees the request. Keep this list in lockstep with the
-        // routes branched on in personal_finance_handler.handler.
+        // An API Gateway v2 HTTP API needs each path in full. It has no catch-all rule. If a
+        // path is absent here, API Gateway returns 404, and the Lambda never sees the request.
+        // Keep this list the same as the routes in personal_finance_handler.handler.
         const routes: { path: string; methods: apigatewayv2.HttpMethod[] }[] = [
             // Category groups (CP12)
             { path: "/api/category-groups", methods: [apigatewayv2.HttpMethod.GET, apigatewayv2.HttpMethod.POST] },
@@ -320,8 +320,8 @@ export class PersonalFinanceWebStack extends cdk.Stack {
             { path: "/api/accounts/{accountId}/deactivate", methods: [apigatewayv2.HttpMethod.POST] },
             { path: "/api/accounts/{accountId}/reactivate", methods: [apigatewayv2.HttpMethod.POST] },
 
-            // Net worth snapshots. The static /history route sits alongside the
-            // /{yearMonth} param route — HTTP API matches the exact segment first.
+            // The net worth snapshots. The fixed /history route sits beside the /{yearMonth}
+            // route. An HTTP API matches the exact segment first.
             { path: "/api/net-worth/history", methods: [apigatewayv2.HttpMethod.GET] },
             {
                 path: "/api/net-worth/{yearMonth}",
@@ -347,9 +347,9 @@ export class PersonalFinanceWebStack extends cdk.Stack {
     ): { distribution: cloudfront.Distribution; assetsBucket: s3.Bucket } {
         const domain = personalFinanceDomain(stage);
 
-        // The assets bucket only holds the built React frontend + config.json — everything
-        // in it is reproducible from `npm run build` + a redeploy, so DESTROY in both
-        // stages. No RETAIN gymnastics needed on stack destroy.
+        // This bucket holds the React build and config.json, and nothing else. A
+        // `npm run build` and a deploy make all of it again, so DESTROY is correct in both
+        // stages. A stack delete then needs no special care.
         const assetsBucket = new s3.Bucket(this, "AssetsBucket", {
             bucketName: `personal-finance-assets-${stage}-${this.account}-${this.region}`,
             blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -358,7 +358,8 @@ export class PersonalFinanceWebStack extends cdk.Stack {
             autoDeleteObjects: true,
         });
 
-        // Origin request policy for API Gateway — forward all viewer headers (including Authorization)
+        // The origin request policy for API Gateway. It forwards every viewer header, and that
+        // includes Authorization.
         const apiOriginRequestPolicy = cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER;
 
         const apiOriginDomain = `${httpApi.httpApiId}.execute-api.${this.region}.amazonaws.com`;
@@ -415,7 +416,7 @@ export class PersonalFinanceWebStack extends cdk.Stack {
     ): void {
         new s3deploy.BucketDeployment(this, "FrontendDeployment", {
             sources: [
-                s3deploy.Source.asset("../personal-finance/dist"),
+                s3deploy.Source.asset("../web/personal-finance/dist"),
                 s3deploy.Source.jsonData("config.json", {
                     cognitoDomain: "https://auth.corderohq.com",
                     clientId: userPoolClient.userPoolClientId,

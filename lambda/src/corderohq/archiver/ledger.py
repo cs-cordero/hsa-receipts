@@ -100,7 +100,7 @@ def _next_id(ledger_csv: str) -> int:
 
 
 def _duplicate_score(ledger_csv: str, entry: LedgerEntry) -> int:
-    """Score how likely an entry is a duplicate of an existing row (0-100).
+    """Return a score from 0 to 100 for the probability that an entry is a duplicate.
 
     Scoring:
     - Same provider (case-insensitive): +30

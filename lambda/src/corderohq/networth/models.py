@@ -1,4 +1,4 @@
-"""Enums and validation helpers for the net-worth tracking feature.
+"""The enums and the check functions for the net worth record.
 
 The two enums are the load-bearing "eye on the future" decision from the design:
 `AssetClass` is the key the eventual Monte Carlo simulation uses to select a
@@ -20,11 +20,11 @@ from typing import Any, NamedTuple
 
 from corderohq.util import YEAR_MONTH_PATTERN
 
-# Profile table keys. `HOUSEHOLD_PK` is the single literal partition key (one
-# household in practice); `PROFILE_SETTINGS_SK` is the reserved sort-key sentinel
-# for a future household-wide settings item (the simulation's horizon age). People
-# SKs are ULIDs, so the sentinel never collides. Both are the authoritative
-# definitions — the table wrapper imports them rather than re-declaring.
+# The keys for the Profile table. `HOUSEHOLD_PK` is the one partition key, because there
+# is one household in practice. `PROFILE_SETTINGS_SK` is a reserved sort key, kept for a
+# settings item for the whole household later, such as the horizon age of the simulation.
+# The sort key for a person is a ULID, so it never equals that reserved value. These two
+# names are the only definitions. The table wrapper imports them, and does not repeat them.
 HOUSEHOLD_PK = "HOUSEHOLD"
 PROFILE_SETTINGS_SK = "SETTINGS"
 
@@ -76,7 +76,7 @@ class AssetClass(StrEnum):
 
 
 class AccountTypeMeta(NamedTuple):
-    """Type-driven behavior for an account type — the authoritative rules.
+    """The rules that each account type follows. This is the only definition of them.
 
     The account type is the "driver": it determines whether the account is a
     liability, whether its asset class is fixed (and to what) or user-chosen, and
@@ -119,14 +119,14 @@ _ACCOUNT_TYPE_META: dict[AccountType, AccountTypeMeta] = {
 
 
 def account_type_meta(account_type: str) -> AccountTypeMeta:
-    """Return the behavior metadata for a validated account type (raises on unknown)."""
+    """Return the rules for an account type. Raise an error if the type is unknown."""
     return _ACCOUNT_TYPE_META[AccountType(validate_account_type(account_type))]
 
 
 def resolve_account_type_fields(
     account_type: Any, asset_classes: Any, loan_terms: Any
 ) -> tuple[str, bool, list[str], dict[str, Any] | None]:
-    """Authoritatively derive (accountType, liability, assetClasses, loanTerms).
+    """Work out accountType, liability, assetClasses, and loanTerms. This is the only source.
 
     `liability` comes from the type, never the client. `assetClasses` is a non-empty
     set of classes: forced to a single value when the type fixes it (client value
@@ -159,7 +159,7 @@ def validate_asset_class(value: Any) -> str:
 
 
 def validate_asset_classes(value: Any) -> list[str]:
-    """Validate an account's `assetClasses` list; return a normalized copy.
+    """Check the `assetClasses` list on an account. Return a copy in the standard form.
 
     An account holds one or more asset classes (a set — see the per-value design).
     Rules: a non-empty list, each entry a valid AssetClass value, duplicates
@@ -178,7 +178,7 @@ def validate_asset_classes(value: Any) -> list[str]:
 
 
 def validate_loan_terms(loan_terms: Any, amortizing: bool) -> dict[str, Any] | None:
-    """Validate an optional loanTerms blob, returning a normalized dict or None.
+    """Check the loanTerms value, which is optional. Return a dict in the standard form, or None.
 
     Rules:
     - None/absent is always allowed and returns None.
@@ -209,7 +209,7 @@ def validate_loan_terms(loan_terms: Any, amortizing: bool) -> dict[str, Any] | N
         raise ValueError(f"loanTerms has unexpected fields {extra}; allowed {list(_LOAN_TERMS_FIELDS)}")
 
     interest_rate = loan_terms["interestRate"]
-    # bool is a subclass of int — reject it explicitly so `True` can't pose as a rate.
+    # In Python a bool is a kind of int. Reject it here, so that `True` cannot act as a rate.
     if isinstance(interest_rate, bool) or not isinstance(interest_rate, (int, float)):
         raise ValueError("loanTerms.interestRate must be a number")
     if not (0 <= interest_rate < 1):
@@ -233,7 +233,7 @@ def validate_loan_terms(loan_terms: Any, amortizing: bool) -> dict[str, Any] | N
 
 
 def validate_owners(value: Any) -> list[str]:
-    """Validate the shape of an account's `owners` list; return a normalized copy.
+    """Check the shape of the `owners` list on an account. Return a copy in the standard form.
 
     An account is owned by one or more household people (a jointly-held account is
     simply two+ owners — there is no separate "joint" sentinel). Rules:
@@ -265,9 +265,9 @@ def validate_birth_year_month(value: Any) -> str:
     return value
 
 
-# Target-date funds are sold in 5-year vintages; the UI offers a dropdown, but the
-# server just enforces a plausible 4-digit year (a fund can be past its target date,
-# so no future-only rule).
+# A target-date fund comes in a 5-year step, and the UI shows a list of them. The server
+# checks only that the year has 4 digits and is possible. A fund can be past its target
+# date, so the year does not have to be in the future.
 def validate_target_year(value: Any) -> int:
     """Return `value` if it is a plausible 4-digit target year, else raise ValueError."""
     if isinstance(value, bool) or not isinstance(value, int):
@@ -278,7 +278,7 @@ def validate_target_year(value: Any) -> int:
 
 
 def resolve_target_year(asset_classes: list[str], target_year: Any) -> int | None:
-    """Enforce the target_date ↔ targetYear coupling; return the value to store or None.
+    """Check that target_date and targetYear agree. Return the value to store, or None.
 
     `targetYear` is required and valid exactly when `target_date` is one of the
     account's asset classes; otherwise it must be absent/None. Mirrors the

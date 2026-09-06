@@ -1,102 +1,117 @@
 # Architecture
 
-## What This Project Does
+## What this project does
 
-This is an automated HSA (Health Savings Account) receipt archiving system. There are two ways to submit receipts:
+This app keeps HSA (Health Savings Account) receipts. You can send a receipt in two ways:
 
-1. **Email**: Send a receipt photo or PDF to a dedicated email address. The system processes it automatically and sends a notification with the result.
-2. **Web UI**: Log in to the web app, upload a receipt, and see the extracted data immediately. The web UI also provides a spreadsheet-style ledger editor.
+1. **Email** — Send a photo or a PDF to a dedicated address. The app reads it, and then sends a
+   notification with the result.
+2. **Web UI** — Sign in, upload a receipt, and see the data at once. The web UI also has a ledger
+   editor that looks like a spreadsheet.
 
-In both cases, the system:
+The app does these steps for both ways:
 
-1. Validates the receipt (email auth checks for email submissions)
-2. Sends the receipt to Claude AI for HSA eligibility analysis
-3. Converts the receipt to PDF/A format for long-term archival
-4. Stores the PDF in S3 with a structured naming convention
-5. Appends a row to a CSV ledger tracking all receipts
-6. Reports the result (SNS notification for email, HTTP response for web)
+1. It checks the receipt. For email, it also checks the email authentication.
+2. It sends the receipt to Claude. Claude decides if the receipt is eligible.
+3. It converts the receipt to PDF/A, a format that lasts many years.
+4. It puts the PDF in S3, with a name that follows a set pattern.
+5. It adds one row to a CSV ledger.
+6. It reports the result. Email gets an SNS notification, and the web UI gets an HTTP response.
 
-## Project Layout
+## Project layout
 
 ```
-hsa-receipts/
-    infra/           AWS CDK infrastructure (TypeScript)
-    lambda/          Lambda function code (Python 3.13)
-        src/         Source code
-        tests/       Unit tests
-        scripts/     Utility scripts (bulk upload, dry run)
-    web/             Static web UI (HTML/CSS/JS)
-    docs/            Documentation
+infra/                  AWS CDK infrastructure (TypeScript)
+lambda/                 Lambda function code (Python 3.13)
+    src/                Source code
+    tests/              Unit tests
+    scripts/            Utility scripts (bulk upload, dry run)
+web/hsa/                Static web UI (HTML/CSS/JS)
+docs/                   Documentation
 ```
 
-## Infrastructure Overview
+## Infrastructure overview
 
-The infrastructure is split into three CDK stacks, deployed in order:
+Four CDK stacks hold this app. Deploy them in this order.
+
+### DnsStack
+
+The single hosted zone, `corderohq.com`. Every app records into it. Deploy this stack first. The
+shared certificate cannot validate until this zone is authoritative in public DNS.
 
 ### PlatformStack
 
-Shared platform resources used by all apps. Manages DNS zones (delegated from the registrar), TLS certificates, a Cognito user pool for authentication, an S3 bucket for static web assets, and a CloudFront distribution that serves the web UI with clean URL routing.
+The resources that all apps share. It holds the TLS certificate, a Cognito user pool for sign-in,
+an S3 bucket for static web assets, and a CloudFront distribution. The distribution serves the web
+UI, and it rewrites URLs so that the paths stay clean.
 
 ### HsaReceiptArchiverStack
 
-The email-based receipt processing pipeline. Includes an S3 bucket for receipt data, the receipt processor Lambda (bundles Ghostscript for PDF/A conversion), SES receipt rules to receive inbound email, SNS topics for notifications, DNS records for email delivery, and a monthly budget with cost alerts.
+The email pipeline. It holds an S3 bucket for the receipt data, and the receipt Lambda. That Lambda
+carries Ghostscript with it, for the PDF/A conversion. The stack also holds the SES receipt rules,
+the SNS topics, the DNS records for mail, and a monthly budget with cost alerts.
 
 ### HsaWebStack
 
-The web application layer. Creates a Cognito app client, an API Gateway HTTP API with JWT-based authorization, a lightweight Lambda for the web API, and deploys the static frontend to the shared assets bucket with CloudFront cache invalidation.
+The web layer. It makes a Cognito app client, an API Gateway HTTP API that checks a JWT, and a
+small Lambda for the web API. It also sends the static frontend to the shared assets bucket, and
+then clears the CloudFront cache.
 
-### How They Connect
+### How they connect
 
 ```
 DnsStack (corderohq.com hosted zone — the single zone for every app)
     |
     +-- PlatformStack (shared TLS cert, Cognito, CloudFront, S3 assets)
             |
-            +-- HsaReceiptArchiverStack (SES, receipt processing Lambda, data S3 bucket)
+            +-- HsaReceiptArchiverStack (SES, receipt processor Lambda, data S3 bucket)
             |       |
             +-------+-- HsaWebStack (API Gateway, web Lambda, static site deployment)
 ```
 
-The web stack depends on both other stacks: it uses the platform's auth and hosting infrastructure, and it invokes the receipt processor Lambda and reads/writes the data bucket from the receipt stack.
+The web stack depends on both of the other stacks. It uses the sign-in and the hosting from the
+platform stack. It also calls the receipt Lambda, and it reads and writes the data bucket from the
+receipt stack.
 
-## Email Processing Flow
+## Email flow
 
 ```
 Email --> SES --> S3 (raw-emails/) + Lambda
                         |
-                  Lambda processes:
-                    1. Validate email auth (SPF/DKIM)
-                    2. Check sender against allow list
-                    3. Send attachments to Claude for analysis
-                    4. Convert eligible receipts to PDF/A
-                    5. Store in S3 (receipts/{year}/...)
-                    6. Update CSV ledger
-                    7. Send SNS notification
+                  The Lambda then:
+                    1. Checks the email authentication (SPF/DKIM)
+                    2. Compares the sender against an allow list
+                    3. Sends each attachment to Claude
+                    4. Converts each eligible receipt to PDF/A
+                    5. Puts it in S3 (receipts/{year}/...)
+                    6. Updates the CSV ledger
+                    7. Sends an SNS notification
 ```
 
-## Web Application Flow
+## Web flow
 
 ```
 Browser --> CloudFront --> S3 (static HTML/CSS/JS)
                 |
                 +--> API Gateway --> Lambda (web handler)
                       (JWT auth)        |
-                                   GET /ledger  --> read CSV from S3
-                                   PUT /ledger  --> write CSV to S3
-                                   POST /receipt --> invoke processor Lambda
+                                   GET /ledger  --> read the CSV from S3
+                                   PUT /ledger  --> write the CSV to S3
+                                   POST /receipt --> call the processor Lambda
 ```
 
-The web UI uses Cognito's hosted login page with PKCE for authentication. After login, the browser gets tokens and sends them as Bearer tokens to the API.
+The web UI signs you in with the Cognito hosted page, and it uses PKCE. After you sign in, the
+browser holds the tokens. It then sends them to the API as Bearer tokens.
 
-## Source Code Structure
+## Source code structure
 
 ### `lambda/src/corderohq/`
 
 ```
-receipt_handler.py      Receipt processing entrypoint (email + web uploads)
+receipt_handler.py      Receipt entrypoint (email + web uploads)
 web_handler.py          Web API entrypoint (GET/PUT /ledger, POST /receipt)
-claude_client.py        Claude API integration for HSA eligibility
-util.py                 Shared utilities (get_env_var, parse_date, today)
+claude_client.py        Claude API calls for HSA eligibility
+util.py                 Shared helpers (get_env_var, parse_date, today)
 
 aws/                    AWS service wrappers
     s3.py               S3 operations (receipts, ledger, raw emails)
@@ -104,99 +119,119 @@ aws/                    AWS service wrappers
     sns.py              SNS notifications (success, rejection, failure)
     ssm.py              SSM Parameter Store (API key, allowed senders)
 
-archiver/               Core archiving logic
-    ledger.py           CSV ledger management with duplicate detection
-    pdf.py              PDF/A conversion and page extraction via Ghostscript
+archiver/               Core archive logic
+    ledger.py           CSV ledger, with a check for duplicates
+    pdf.py              PDF/A conversion and page extraction, through Ghostscript
 ```
 
-### `web/`
+### `web/hsa/`
 
 ```
 index.html              Main page (ledger editor)
 upload.html             Receipt upload page
 callback.html           OAuth callback handler
 config.js               Environment configuration (domains, client ID)
-auth.js                 Authentication logic (login, token management)
-ledger.js               Spreadsheet-style ledger editor (AG Grid)
-upload.js               Receipt upload and results display
+auth.js                 Sign-in and token management
+ledger.js               Ledger editor, in the style of a spreadsheet (AG Grid)
+upload.js               Receipt upload, and the result display
 styles.css              Shared styles
+favicon.svg             Symlink to web/shared/favicon.svg
 ```
 
-### Receipt Processing (`receipt_handler.py`)
+### The receipt Lambda (`receipt_handler.py`)
 
-`process_receipt` is the Lambda entrypoint. It handles two event types:
+`process_receipt` is the entrypoint. It accepts two kinds of event:
 
-- **SES events** (email): Extracts the SES record, checks SPF/DKIM verdicts, fetches the raw email from S3, validates the sender against an allow list, then processes each attachment.
-- **Web events** (upload): Fetches the uploaded file from S3 and processes it directly.
+- **SES events**, from email. It reads the SES record, checks the SPF and DKIM verdicts, gets the
+  raw email from S3, compares the sender against an allow list, and then reads each attachment.
+- **Web events**, from an upload. It gets the file from S3 and reads it directly.
 
-For each attachment, it sends the content to Claude for HSA analysis, filters by eligibility (unless force-store is enabled), converts to PDF/A, stores in S3, and updates the ledger.
+For each attachment, it sends the content to Claude. It then keeps only the eligible receipts,
+unless force-store is on. It converts each one to PDF/A, puts it in S3, and updates the ledger.
 
-### Web API (`web_handler.py`)
+### The web API (`web_handler.py`)
 
-`handle` is the Lambda entrypoint for the HTTP API. It routes by method and path:
+`handle` is the entrypoint for the HTTP API. It sends each request to a different function, by
+method and path:
 
-- **GET /ledger**: Returns the CSV ledger from S3 (or an empty ledger if none exists).
-- **PUT /ledger**: Replaces the CSV ledger in S3 with the request body.
-- **POST /receipt**: Accepts a base64-encoded file, stores it in S3, invokes the processor Lambda synchronously, and returns the extracted entries and rejections.
+- **GET /ledger** — Returns the CSV ledger from S3. If no ledger exists, it returns an empty one.
+- **PUT /ledger** — Replaces the CSV ledger in S3 with the request body.
+- **POST /receipt** — Accepts a file in base64, puts it in S3, calls the processor Lambda, and
+  waits. It then returns the entries and the rejections.
 
-### Claude Integration (`claude_client.py`)
+### Claude (`claude_client.py`)
 
-Uses Claude Haiku for cost efficiency. The system prompt instructs Claude to extract each out-of-pocket transaction separately, focusing on patient responsibility (copays, coinsurance, deductibles) and excluding insurance payments or adjustments.
+The app uses Claude Haiku, because it costs less. The system prompt tells Claude to find each
+out-of-pocket transaction on its own. Claude keeps what the patient pays — the copay, the
+coinsurance, and the deductible. It ignores what the insurance pays, and it ignores adjustments.
 
-Each result includes: eligibility, description, category, amount, provider, dates, patient, and reasoning.
+Each result holds the eligibility, a description, a category, an amount, a provider, the dates,
+the patient, and the reason.
 
-Multi-page PDFs (3-10 pages) are split into individual pages and analyzed separately. PDFs over 10 pages are rejected.
+A PDF of 3 to 10 pages becomes one image for each page, and Claude reads each page on its own.
+The app rejects a PDF of more than 10 pages.
 
-### PDF/A Conversion (`archiver/pdf.py`)
+### PDF/A conversion (`archiver/pdf.py`)
 
-Uses Ghostscript (bundled with the Lambda) to produce PDF/A-2b output. Images are first converted to PDF via Pillow at 300 DPI, then run through Ghostscript. PDFs go directly through Ghostscript.
+Ghostscript makes the PDF/A-2b output, and the Lambda carries Ghostscript with it. Pillow converts
+an image to a PDF first, at 300 DPI, and Ghostscript then converts that PDF. A PDF goes to
+Ghostscript directly.
 
-### Ledger (`archiver/ledger.py`)
+### The ledger (`archiver/ledger.py`)
 
-A CSV file stored in S3. Columns: Id, Service Date, Payment Date, Vendor/Provider, Patient/For, Category, Description, Amount, Receipt S3 URI, Reimbursed, Notes, Prob. of Duplicate.
+One CSV file in S3. It has these columns: Id, Service Date, Payment Date, Vendor/Provider,
+Patient/For, Category, Description, Amount, Receipt S3 URI, Reimbursed, Notes, Prob. of Duplicate.
 
-New entries get an auto-incremented ID and a duplicate probability score (0-100) based on matching provider, amount, and service date against existing entries.
+Each new entry gets the next ID in sequence. It also gets a score from 0 to 100 for the
+probability that it is a duplicate. The score compares the provider, the amount, and the service
+date against the entries that exist.
 
-## Environment Variables
+## Environment variables
 
-### Receipt Processor Lambda
+### Receipt processor Lambda
 
 | Variable | Purpose |
 |---|---|
-| `BUCKET_NAME` | S3 bucket for receipt data |
-| `SSM_API_KEY_PARAM` | SSM path to Anthropic API key |
-| `SSM_ALLOWED_SENDERS_PARAM` | SSM path to allowed sender list |
-| `SNS_TOPIC_ARN` | Main notification topic |
-| `SNS_DETAILED_FAILURE_TOPIC_ARN` | Detailed failure topic |
-| `LD_LIBRARY_PATH` | Ghostscript shared libraries |
-| `GS_LIB` | Ghostscript resource files |
+| `BUCKET_NAME` | The S3 bucket for the receipt data |
+| `SSM_API_KEY_PARAM` | The SSM path to the Anthropic API key |
+| `SSM_ALLOWED_SENDERS_PARAM` | The SSM path to the allowed sender list |
+| `SNS_TOPIC_ARN` | The main notification topic |
+| `SNS_DETAILED_FAILURE_TOPIC_ARN` | The topic for detailed failures |
+| `LD_LIBRARY_PATH` | The Ghostscript shared libraries |
+| `GS_LIB` | The Ghostscript resource files |
 
-### Web Handler Lambda
+### Web handler Lambda
 
 | Variable | Purpose |
 |---|---|
-| `BUCKET_NAME` | S3 bucket for receipt data |
-| `PROCESSOR_FUNCTION_NAME` | Receipt processor Lambda to invoke |
+| `BUCKET_NAME` | The S3 bucket for the receipt data |
+| `PROCESSOR_FUNCTION_NAME` | The receipt Lambda to call |
 
-All env vars are accessed via `get_env_var()` which raises if missing or blank.
+Every environment variable goes through `get_env_var()`. That function raises an error if the
+value is absent or blank.
 
-## Testing
+## Tests
 
-- **Python**: 113 unit tests across 9 test files. All AWS calls are mocked. Run with `uv run pytest`.
-- **TypeScript**: 47 CDK tests across 2 test files. Run with `cd infra && npm test`.
+- **Python** — 113 unit tests in 9 files. Every AWS call is a mock. Run `uv run pytest`.
+- **TypeScript** — 47 CDK tests in 2 files. Run `npm test` from `infra/`.
 
-Test fixtures in `conftest.py` set dummy AWS credentials and SNS topic ARNs so module-level `boto3.client()` calls don't fail during import.
+The fixtures in `conftest.py` set dummy AWS credentials and SNS topic ARNs. Without them, the
+`boto3.client()` calls at module level fail during the import.
 
-## Key Design Decisions
+## Key decisions
 
-- **Three stacks**: Separates shared platform (DNS, auth, CDN) from the receipt pipeline and the web app, allowing independent updates.
-- **Haiku model**: Balances cost and quality for receipt analysis.
-- **PDF/A-2b**: Archival-grade format for long-term storage.
-- **CSV ledger**: Simple, portable, human-editable. No database needed.
-- **Per-page PDF splitting**: Avoids Claude's context limitations on large documents.
-- **FORCE_STORE**: Escape hatch when Claude incorrectly rejects a receipt.
-- **SPF/DKIM enforcement**: Prevents email spoofing attacks.
-- **S3 versioning**: Protects against accidental ledger overwrites.
-- **Ghostscript bundling**: Included in Lambda deployment (not a Lambda layer) for simpler management.
-- **PKCE auth flow**: Secure browser-based OAuth without a client secret.
-- **CloudFront Function for URL rewriting**: Enables clean URLs (e.g., `/upload` instead of `/upload.html`) without server-side routing.
+- **Four stacks** — The shared platform, the DNS, the receipt pipeline, and the web app each stay
+  separate. You can then change one without the others.
+- **The Haiku model** — It gives good results for a receipt, and it costs little.
+- **PDF/A-2b** — A format made for storage that lasts many years.
+- **A CSV ledger** — It is simple, it moves easily, and a person can edit it. No database is
+  necessary.
+- **One Claude call for each page** — A large document is too big for one call.
+- **FORCE_STORE** — A way past the check, for when Claude rejects a good receipt.
+- **SPF and DKIM checks** — They stop an attacker who makes a false email address.
+- **S3 versions** — They protect the ledger if someone writes over it by mistake.
+- **Ghostscript inside the Lambda** — It is part of the deployment, and not a Lambda layer. One
+  fewer thing to manage.
+- **The PKCE flow** — Safe OAuth in a browser, with no client secret.
+- **A CloudFront function for the URLs** — It gives clean paths, such as `/upload` in place of
+  `/upload.html`, and the server needs no route logic.

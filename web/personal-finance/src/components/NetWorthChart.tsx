@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { formatCurrency, formatYearMonth } from "../format";
 
-// A dependency-light, single-series "net worth over time" line chart (inline SVG).
-// Single series => no legend (the heading names it). Recessive grid + axis ink,
-// a 2px line, a labeled latest point, and a hover crosshair + tooltip per the
-// data-viz guidance. Colors target the app's light slate surface.
+// A line chart of the net worth over time, drawn as inline SVG. It has one series, and it
+// needs almost no other code. One series needs no legend, because the heading names it. The
+// grid lines and the axis ink stay light. The line is 2px. The most recent point has a
+// label. A hover shows a crosshair and a tooltip. The colours suit the light slate
+// background of the app.
 
 interface NetWorthChartProps {
     months: string[]; // ascending YYYY-MM

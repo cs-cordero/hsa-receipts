@@ -69,7 +69,7 @@ class EligibilityResult:
 
 
 def _parse_json_response(text: str) -> list[dict[str, object]]:
-    """Parse Claude's JSON response, handling both arrays and newline-delimited objects."""
+    """Parse the JSON response from Claude. It accepts an array, and objects on separate lines."""
     if not text.strip():
         raise ValueError("Claude returned an empty response — no JSON to parse")
 

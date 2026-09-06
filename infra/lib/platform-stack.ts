@@ -29,7 +29,7 @@ interface PlatformStackProps extends cdk.StackProps {
  * - CloudFront distribution: corderohq.com + www.corderohq.com → S3 /root/ (OAC, HTTPS redirect)
  * - Route 53 A record: corderohq.com → CloudFront
  * - Route 53 A record: www.corderohq.com → CloudFront
- * - S3 BucketDeployment: root/ → assets bucket root/ prefix (CloudFront invalidation)
+ * - S3 BucketDeployment: web/root/ → assets bucket root/ prefix (CloudFront invalidation)
  * - CloudFront distribution: hsa.corderohq.com → S3 /hsa/ (OAC, HTTPS redirect, /oauth2/* → Cognito proxy)
  * - Route 53 A record: hsa.corderohq.com → CloudFront
  */
@@ -50,8 +50,8 @@ export class PlatformStack extends cdk.Stack {
         this.createCertificate(rootZone);
         this.createCloudFront();
 
-        // Cognito refuses to create a custom domain unless the parent domain resolves to an A
-        // record, so corderohq.com must exist in the zone before auth.corderohq.com is created.
+        // Cognito makes a custom domain only when the parent domain resolves to an A record.
+        // So corderohq.com must exist in the zone before we make auth.corderohq.com.
         const apexRecord = this.createApexRecord(rootZone);
         const cognitoDomain = this.createCognito();
         cognitoDomain.node.addDependency(apexRecord);
@@ -114,8 +114,10 @@ export class PlatformStack extends cdk.Stack {
     }
 
     private createCloudFront(): void {
-        // S3 bucket for static web assets — shared across all apps
-        // Each app deploys to its own key prefix (e.g., hsa/, personal-finance/)
+        // The S3 bucket for the static pages that PlatformStack serves: hsa/ and root/.
+        // An app with a CloudFront distribution of its own needs a bucket of its own. Origin
+        // access control writes the distribution ARN into the bucket policy, and that would make
+        // this stack depend on the app stack.
         this.assetsBucket = new s3.Bucket(this, "AssetsBucket", {
             bucketName: `corderohq-assets-${this.account}-${this.region}`,
             blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -123,7 +125,7 @@ export class PlatformStack extends cdk.Stack {
             removalPolicy: cdk.RemovalPolicy.RETAIN,
         });
 
-        // CloudFront Function — rewrite directory and extensionless paths
+        // A CloudFront function that rewrites a directory path, and a path with no extension.
         const urlRewriteCode = [
             "function handler(event) {",
             "    var request = event.request;",
@@ -142,8 +144,9 @@ export class PlatformStack extends cdk.Stack {
         });
 
         // The apex serves one page, so it does not need the directory rewrite. It needs a
-        // redirect instead: www.corderohq.com must send the visitor to the naked domain.
-        // A behavior permits only one viewer-request function, so the apex gets its own.
+        // redirect instead: www.corderohq.com must send the visitor to the naked domain. A
+        // behavior permits one viewer-request function only, so the apex gets a function of
+        // its own.
         const wwwRedirectCode = [
             "function handler(event) {",
             "    var request = event.request;",
@@ -163,8 +166,8 @@ export class PlatformStack extends cdk.Stack {
             code: cloudfront.FunctionCode.fromInline(wwwRedirectCode),
         });
 
-        // The apex distribution. It also gives corderohq.com a resolvable A record, which
-        // Cognito needs before it accepts auth.corderohq.com as a custom domain.
+        // The apex distribution. It also gives corderohq.com an A record that resolves.
+        // Cognito needs that record before it accepts auth.corderohq.com as a custom domain.
         this.rootDistribution = new cloudfront.Distribution(this, "RootDistribution", {
             comment: "corderohq.com apex",
             defaultBehavior: {
@@ -180,12 +183,13 @@ export class PlatformStack extends cdk.Stack {
                 ],
             },
             defaultRootObject: "index.html",
-            // Error pages of our own, so a visitor never sees the S3 error document in XML.
+            // Our own error pages. A visitor then never sees the S3 error document in XML.
             //
             // Note which page a visitor really gets. Origin access control grants s3:GetObject
-            // only, not s3:ListBucket. Without the permission to list, S3 will not reveal
-            // whether a key exists, so it answers 403 for a missing key. Almost every bad path
-            // therefore reaches 403.html. 404.html shows only on a true 404 from the origin.
+            // only, and not s3:ListBucket. Without the permission to list, S3 does not say
+            // whether a key exists, so it answers 403 for a key that is absent. Almost every bad
+            // path therefore reaches 403.html. 404.html shows only on a true 404 from the
+            // origin.
             errorResponses: [
                 { httpStatus: 403, responseHttpStatus: 403, responsePagePath: "/403.html" },
                 { httpStatus: 404, responseHttpStatus: 404, responsePagePath: "/404.html" },
@@ -198,7 +202,7 @@ export class PlatformStack extends cdk.Stack {
         new s3deploy.BucketDeployment(this, "RootAssets", {
             // `followSymlinks: EXTERNAL` resolves favicon.svg, which points at ../shared/.
             sources: [
-                s3deploy.Source.asset("../root", {
+                s3deploy.Source.asset("../web/root", {
                     followSymlinks: cdk.SymlinkFollowMode.EXTERNAL,
                 }),
             ],
@@ -208,7 +212,7 @@ export class PlatformStack extends cdk.Stack {
             distributionPaths: ["/*"],
         });
 
-        // CloudFront distribution with OAC to the assets bucket
+        // The HSA distribution. It reads the assets bucket through origin access control.
         this.distribution = new cloudfront.Distribution(this, "Distribution", {
             comment: "corderohq.com web apps",
             defaultBehavior: {
@@ -246,8 +250,8 @@ export class PlatformStack extends cdk.Stack {
             target: route53.RecordTarget.fromAlias(new route53Targets.CloudFrontTarget(this.rootDistribution)),
         });
 
-        // The same distribution answers for www. Its viewer-request function returns a 301 to
-        // the naked domain.
+        // The same distribution answers for www. Its viewer-request function then returns a
+        // 301 to the naked domain.
         new route53.ARecord(this, "WwwCloudFrontAlias", {
             zone: rootZone,
             recordName: WWW_DOMAIN,

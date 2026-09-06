@@ -161,9 +161,9 @@ export class HsaReceiptsStack extends cdk.Stack {
     }
 
     private createDnsRecords(rootZone: route53.IHostedZone): void {
-        // SES MX record in Route 53. The record name is explicit because the zone is now
-        // corderohq.com — defaulting to the zone apex would put SES on corderohq.com and
-        // clobber the mailbox forwarding there.
+        // The SES MX record in Route 53. The record name is explicit, because the zone is now
+        // corderohq.com. Without it, the record would go to the zone apex. SES would then take
+        // corderohq.com, and it would write over the mail records there.
         new route53.MxRecord(this, "SesMxRecord", {
             zone: rootZone,
             recordName: HSA_DOMAIN,

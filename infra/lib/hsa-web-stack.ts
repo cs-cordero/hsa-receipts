@@ -37,7 +37,7 @@ interface HsaWebStackProps extends cdk.StackProps {
  * - API Gateway custom domain: api.hsa.corderohq.com
  * - API Gateway API mapping: api.hsa.corderohq.com → hsa-web-api
  * - Route 53 A record: api.hsa.corderohq.com → API Gateway
- * - S3 BucketDeployment: web/ → assets bucket hsa/ prefix (CloudFront invalidation)
+ * - S3 BucketDeployment: web/hsa/ → assets bucket hsa/ prefix (CloudFront invalidation)
  */
 export class HsaWebStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props: HsaWebStackProps) {
@@ -50,11 +50,11 @@ export class HsaWebStack extends cdk.Stack {
         this.createApiGateway(props, userPoolClient, webHandler);
 
         // Deploy static web files to the shared assets bucket. `followSymlinks: EXTERNAL`
-        // resolves the favicon.svg symlink that points outside web/ (it lives at
-        // ../shared/favicon.svg so the HSA and personal finance apps can share one source).
+        // resolves the favicon.svg symlink, which points outside web/hsa/ to web/shared/ so
+        // that every frontend shares one icon.
         new s3deploy.BucketDeployment(this, "WebAssets", {
             sources: [
-                s3deploy.Source.asset("../web", {
+                s3deploy.Source.asset("../web/hsa", {
                     followSymlinks: cdk.SymlinkFollowMode.EXTERNAL,
                 }),
             ],

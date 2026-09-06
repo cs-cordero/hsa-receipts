@@ -2,44 +2,67 @@
 
 ## Prerequisites
 
-- AWS CLI configured with credentials for the target account
-- Node.js (for CDK)
-- Docker (for Lambda bundling during CDK deploy)
+- The AWS CLI, set up with credentials for the target account
+- Node.js, for the CDK
+- Docker, because the CDK builds the Lambdas in a container during a deploy
 - Python 3.13
-- [uv](https://docs.astral.sh/uv/) (Python package manager)
+- [uv](https://docs.astral.sh/uv/), the Python package manager
 
 ## Setup
 
 ```bash
-# Install CDK dependencies
+# CDK dependencies
 cd infra
 npm install
 
-# Install Lambda dependencies
+# Lambda dependencies
 cd lambda
 uv sync
+
+# Personal finance frontend dependencies
+cd web/personal-finance
+npm install
 ```
 
-## Deploying
+## Deploy
+
+**Build the personal finance frontend first.** Its stack sends `web/personal-finance/dist` to S3,
+and not the source. If you skip the build, the deploy sends the previous build again.
 
 ```bash
-cd infra
-npx cdk deploy --all
+cd web/personal-finance && npm run build
+cd ../../infra && npx cdk deploy --all
 ```
 
-CDK handles everything: building the Lambdas (including Ghostscript), creating AWS resources, deploying the web UI, and wiring permissions. The Lambda builds run in Docker to compile native dependencies.
+The other three frontends need no build step. Their stacks send the source folder directly.
 
-The stacks deploy in order: PlatformStack first, then HsaReceiptArchiverStack, then HsaWebStack. To deploy a single stack without its dependencies, use `--exclusively`:
+The CDK does the rest. It builds the Lambdas, and that includes Ghostscript. It makes the AWS
+resources, sends the web UI, and sets the permissions. The Lambda builds run in Docker, because
+some dependencies need a compiler.
+
+The stacks deploy in this order: `DnsStack`, then `PlatformStack`, then the app stacks. To deploy
+one stack alone, and to leave the stacks it depends on as they are, use `--exclusively`:
 
 ```bash
 npx cdk deploy HsaWebStack --exclusively
 ```
 
-### First-Time Setup (after initial deploy)
+### First-time setup, after the first deploy
 
-1. **Delegate DNS** from your registrar to Route 53. Deploy `DnsStack` on its own first (`npx cdk deploy DnsStack`) — it creates the single `corderohq.com` hosted zone that every app records into. Copy its four nameservers from the `RootZoneNameServers` output into the registrar's nameserver settings, and wait for them to resolve before deploying anything else. The shared ACM certificate validates via DNS against this zone, so it cannot be issued until the delegation is live.
+1. **Delegate the DNS from your registrar to Route 53.** Deploy `DnsStack` on its own first:
 
-2. **Set the Anthropic API key** in SSM Parameter Store:
+    ```bash
+    npx cdk deploy DnsStack
+    ```
+
+    It makes the single `corderohq.com` hosted zone. Every app records into that zone. Copy its
+    four nameservers from the `RootZoneNameServers` output into the nameserver settings at your
+    registrar. Then wait until they resolve.
+
+    Do this before you deploy anything else. The shared ACM certificate validates through DNS
+    against this zone, so AWS cannot issue it until the delegation is live.
+
+2. **Put the Anthropic API key in SSM Parameter Store:**
     ```bash
     aws ssm put-parameter \
         --name /hsa-receipt-archiver/anthropic-api-key \
@@ -47,7 +70,7 @@ npx cdk deploy HsaWebStack --exclusively
         --type SecureString
     ```
 
-3. **Set the allowed sender list** (comma-separated emails):
+3. **Set the allowed sender list.** Separate each address with a comma:
     ```bash
     aws ssm put-parameter \
         --name /hsa-receipt-archiver/allowed-senders \
@@ -55,7 +78,7 @@ npx cdk deploy HsaWebStack --exclusively
         --type String
     ```
 
-4. **Subscribe to SNS topics** to receive email notifications:
+4. **Subscribe to the SNS topics, to get the notifications by email:**
     ```bash
     # Main notifications (success, rejection, failure)
     aws sns subscribe \
@@ -63,7 +86,7 @@ npx cdk deploy HsaWebStack --exclusively
         --protocol email \
         --notification-endpoint you@example.com
 
-    # Detailed failures (stack traces for debugging)
+    # Detailed failures (stack traces, to help you find a fault)
     aws sns subscribe \
         --topic-arn <detailed-failure-topic-arn> \
         --protocol email \
@@ -76,65 +99,72 @@ npx cdk deploy HsaWebStack --exclusively
         --notification-endpoint you@example.com
     ```
 
-    Find the topic ARNs in the AWS Console under SNS, or from `cdk deploy` output.
+    Find each topic ARN in the AWS Console under SNS, or in the output of `cdk deploy`.
 
-5. **Activate the SES receipt rule set**. CDK creates the rule set, but SES requires you to manually activate it in the AWS Console (SES > Email Receiving > Rule Sets).
+5. **Make the SES receipt rule set active.** The CDK makes the rule set, but SES does not let the
+   CDK activate it. Do this by hand in the AWS Console, under SES > Email Receiving > Rule Sets.
 
-6. **Create a Cognito user**. The user pool has self-signup disabled, so create users via the AWS Console or CLI:
+6. **Make a Cognito user.** The user pool does not permit self-signup, so make each user in the
+   AWS Console or with the CLI:
     ```bash
     aws cognito-idp admin-create-user \
         --user-pool-id <pool-id> \
         --username you@example.com \
         --user-attributes Name=email,Value=you@example.com Name=email_verified,Value=true
     ```
-    You'll receive a temporary password by email. On first login, you'll set a new password and configure MFA (TOTP).
+    You get a temporary password by email. At the first sign-in, you set a new password and you
+    set up MFA with TOTP.
 
-## Using the Web UI
+## How to use the web UI
 
-Navigate to your configured domain in a browser. You'll be redirected to the login page on first visit.
+Open your domain in a browser. On the first visit, the app sends you to the sign-in page.
 
-### Ledger Editor
+### The ledger editor
 
-The home page shows the receipt ledger in a spreadsheet-style grid (powered by AG Grid). You can:
+The home page shows the receipt ledger in a grid, in the style of a spreadsheet. AG Grid draws it.
+You can:
 
-- Edit any cell directly
-- Add new rows
-- Delete selected rows
-- Save changes back to S3
+- Change any cell directly
+- Add a row
+- Delete the rows you select
+- Save your changes back to S3
 
-The "Unsaved changes" indicator appears when you have local edits that haven't been saved.
+The "Unsaved changes" mark appears when you have local changes that you did not save.
 
-### Receipt Upload
+### How to upload a receipt
 
-Click "Upload" in the nav bar. Select a receipt file (PDF, JPEG, PNG, GIF, or WebP) and click "Upload & Analyze". The system will:
+Click "Upload" in the navigation bar. Choose a receipt file — a PDF, a JPEG, a PNG, a GIF, or a
+WebP — and then click "Upload & Analyze". The app then:
 
-- Send the receipt to Claude for HSA eligibility analysis
-- Display the extracted entries in a table
-- Show any rejections with reasoning
+- Sends the receipt to Claude, which decides if it is eligible
+- Shows the entries it found, in a table
+- Shows each rejection, with the reason
 
-Check "Force store" to bypass eligibility checks (useful when Claude incorrectly rejects a valid receipt).
+Select "Force store" to go past the eligibility check. This helps when Claude rejects a good
+receipt.
 
-## Submitting Receipts via Email
+## How to send a receipt by email
 
-Email a receipt image or PDF as an attachment to your configured SES address. The system will process it and send you an SNS notification with the result.
+Send an image or a PDF as an attachment, to your SES address. The app reads it, and then sends you
+an SNS notification with the result.
 
-To force-store a receipt that Claude rejects, re-send the email with `FORCE_STORE` in the email body.
+To store a receipt that Claude rejects, send the email again with `FORCE_STORE` in the body.
 
-## Running Tests
+## How to run the tests
 
 ```bash
 # Python (113 tests)
 cd lambda
-uv run pytest              # all tests
-uv run pytest -v           # verbose output
-uv run pytest tests/test_receipt_handler.py  # specific file
+uv run pytest              # every test
+uv run pytest -v           # more output
+uv run pytest tests/test_receipt_handler.py  # one file
 
 # TypeScript CDK (47 tests)
 cd infra
 npm test
 ```
 
-## Linting and Formatting
+## Lint and format
 
 ### Python
 
@@ -154,22 +184,33 @@ npm run format             # prettier
 npm run typecheck          # tsc
 ```
 
+### Personal finance frontend
+
+```bash
+cd web/personal-finance
+npm run lint
+npm run format:check
+```
+
 ## Scripts
 
-### Dry Run
+### Dry run
 
-Test Claude's analysis on a receipt without storing anything:
+See what Claude says about a receipt, and store nothing:
 
 ```bash
 cd lambda
 uv run python scripts/dry_run.py /path/to/receipt.jpg --api-key sk-ant-...
 ```
 
-Prints what Claude would return: eligibility, amounts, provider, dates, reasoning. Useful for debugging prompt issues or checking a receipt before submitting. Pass `--model` to override the default model.
+It prints what Claude would return: the eligibility, the amounts, the provider, the dates, and the
+reason. Use it to test a change to the prompt, or to check a receipt before you send it. Add
+`--model` to use a different model.
 
-### Bulk Upload
+### Bulk upload
 
-Process a folder of receipts through the full Lambda pipeline (useful for initial migration):
+Send a folder of receipts through the whole Lambda pipeline. This helps when you move your old
+receipts in for the first time:
 
 ```bash
 cd lambda
@@ -178,28 +219,29 @@ uv run python scripts/bulk_upload.py /path/to/receipts/ \
     --sender you@example.com
 ```
 
-Wraps each file in a MIME email, uploads it to S3 as a raw email, and invokes the Lambda synchronously.
+The script puts each file in a MIME email, uploads that email to S3, and then calls the Lambda and
+waits for it.
 
-## Common Operations
+## Usual tasks
 
-### Checking Lambda Logs
+### How to read the Lambda logs
 
 ```bash
 aws logs tail /aws/lambda/hsa-receipt-archiver --follow
 aws logs tail /aws/lambda/hsa-web-handler --follow
 ```
 
-### Updating SSM Parameters
+### How to change an SSM parameter
 
 ```bash
-# Update allowed senders
+# Change the allowed senders
 aws ssm put-parameter \
     --name /hsa-receipt-archiver/allowed-senders \
     --value "user1@example.com,user2@example.com" \
     --type String \
     --overwrite
 
-# Rotate API key
+# Replace the API key
 aws ssm put-parameter \
     --name /hsa-receipt-archiver/anthropic-api-key \
     --value "sk-ant-new-key" \
@@ -207,24 +249,28 @@ aws ssm put-parameter \
     --overwrite
 ```
 
-Note: SSM values are cached in the Lambda's memory. After updating a parameter, the Lambda will pick up the new value on its next cold start. To force a cold start, update any Lambda environment variable (e.g., add and remove a dummy variable).
+Note: the Lambda keeps each SSM value in its memory. After you change a parameter, the Lambda
+reads the new value at its next cold start. To force a cold start, change any environment variable
+on the Lambda. You can add a variable that does nothing, and then remove it.
 
-### S3 Operations
+### S3 tasks
 
 ```bash
-# Download the ledger
+# Get the ledger
 aws s3 cp s3://BUCKET/ledger/hsa-receipts.csv ./hsa-receipts.csv
 
-# List archived receipts
+# List the receipts in the archive
 aws s3 ls s3://BUCKET/receipts/ --recursive
 ```
 
-## Cost Monitoring
+## Costs
 
-A monthly AWS Budget is configured with alerts at 50%, 80%, and 100% of the budget limit. Alerts go to an SNS topic — subscribe to it the same way as the notification topics.
+A monthly AWS Budget sends an alert at 50%, at 80%, and at 100% of its limit. The alerts go to an
+SNS topic. Subscribe to it in the same way as the notification topics.
 
-The primary cost drivers are:
-- Claude API calls (billed by Anthropic, not AWS)
-- Lambda execution time
-- S3 storage
-- SNS email delivery
+These four things cost the most:
+
+- The Claude API calls. Anthropic bills these, and not AWS.
+- The Lambda run time
+- The S3 storage
+- The SNS email delivery

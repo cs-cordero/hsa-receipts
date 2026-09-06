@@ -56,8 +56,8 @@ function parseCategoryNameHistoryEntry(raw: unknown): CategoryNameHistoryEntry {
 
 export function parseCategoryGroup(raw: unknown): CategoryGroup {
     const obj = requireObject(raw, "CategoryGroup");
-    // Pre-existing rows may still carry an `active` boolean from the old soft-delete
-    // model. We ignore it — groups now have a single lifecycle state (exists or not).
+    // An old row can still hold an `active` boolean, from the earlier soft-delete design.
+    // We ignore it. A group now has one state only: it exists, or it does not.
     return {
         groupId: requireString(obj, "groupId", "CategoryGroup"),
         name: requireString(obj, "name", "CategoryGroup"),
@@ -242,10 +242,10 @@ export function parseSummary(raw: unknown): Summary {
 }
 
 function parseChanges(raw: unknown): Record<string, unknown> {
-    // The `changes` payload shape is action-shaped (architecture: "Audit entry changes
-    // payload"). CREATE/UPDATE/PIN/UNPIN use {before, after}. CATEGORY_HARD_DELETE uses
-    // {budgetRowsDeleted: N, transactionsDeleted: M, name: string}. The renderer
-    // branches on `action`; here we just preserve the shape.
+    // The shape of the `changes` value depends on the action. See "Audit entry changes
+    // payload" in the architecture. CREATE, UPDATE, PIN, and UNPIN use {before, after}.
+    // CATEGORY_HARD_DELETE uses {budgetRowsDeleted: N, transactionsDeleted: M,
+    // name: string}. The component reads `action` to choose. Here we keep the shape.
     return requireObject(raw, "AuditEntry.changes");
 }
 
@@ -369,7 +369,7 @@ export function parseDeletedGroup(raw: unknown): { groupId: string } {
     };
 }
 
-// --- Net worth tracking ---
+// --- The net worth record ---
 
 export function parsePerson(raw: unknown): Person {
     const obj = requireObject(raw, "Person");

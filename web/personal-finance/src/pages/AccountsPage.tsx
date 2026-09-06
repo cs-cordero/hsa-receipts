@@ -36,9 +36,9 @@ import {
 
 // --- Form state -------------------------------------------------------------
 
-// The account TYPE drives everything else: liability, whether the asset class is
-// fixed, and whether loan-term fields appear. So the form tracks the type and
-// derives the rest from ACCOUNT_TYPE_META rather than storing them separately.
+// The account TYPE sets everything else: the liability flag, whether the asset class is
+// fixed, and whether the loan-term fields appear. So the form holds the type, and it reads
+// the rest from ACCOUNT_TYPE_META. It keeps no separate copy of those values.
 interface AccountFormState {
     name: string;
     accountType: string;

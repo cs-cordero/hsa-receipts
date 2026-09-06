@@ -49,7 +49,7 @@ _SECURITY_HEADERS = {
 
 
 def _now_utc() -> datetime:
-    """Real wall-clock UTC. Indirected so tests can patch it deterministically."""
+    """Return the real UTC time. This sits in its own function so a test can replace it."""
     return datetime.now(tz=UTC)
 
 
@@ -57,7 +57,7 @@ _BUDGET_TZ = ZoneInfo("America/New_York")
 
 
 def _year_month_of(now: datetime) -> str:
-    """Year-month string anchored in BUDGET_TZ (America/New_York).
+    """Return the year-month string, in BUDGET_TZ (America/New_York).
 
     The budget rolls over at midnight ET on the 1st, per the architecture spec.
     Using the UTC year/month would put the rollover a few hours early for the
@@ -69,7 +69,7 @@ def _year_month_of(now: datetime) -> str:
 
 
 def _resolve_now(event: dict[str, Any]) -> datetime:
-    """Compute the effective "now" for one request.
+    """Return the "now" that this one request must use.
 
     Honors `X-Simulated-Date` in non-prod stages so dev users can simulate
     viewing the app at a different date (rollover, lock, future-pin testing).
@@ -90,12 +90,12 @@ def _resolve_now(event: dict[str, Any]) -> datetime:
         raw = headers.get("x-simulated-date") or headers.get("X-Simulated-Date")
         if raw:
             parsed: datetime | None = None
-            # Try date-only first. `datetime.fromisoformat` in 3.11+ accepts
-            # bare dates (e.g. "2026-08-01") and returns midnight, but midnight
-            # UTC lands on the previous calendar day in any west-of-UTC zone
-            # (ET is UTC-4/-5) which then misroutes _year_month_of. Noon UTC
-            # sits inside the picked day everywhere from UTC-11 through UTC+11,
-            # so we anchor date-only inputs there.
+            # Try a date on its own first. In Python 3.11 and later,
+            # `datetime.fromisoformat` accepts a bare date such as "2026-08-01", and it
+            # returns midnight. But midnight UTC falls on the day before in any zone west
+            # of UTC, and ET is UTC-4 or UTC-5. _year_month_of would then give the wrong
+            # month. Noon UTC falls inside the chosen day in every zone from UTC-11 to
+            # UTC+11, so a date on its own goes to noon.
             try:
                 parsed = datetime.strptime(raw, "%Y-%m-%d").replace(hour=12, tzinfo=UTC)
             except ValueError:
@@ -120,7 +120,7 @@ def _resolve_now(event: dict[str, Any]) -> datetime:
 
 
 def _ensure_hydrated(now: datetime) -> None:
-    """Run densification so every month up to `now`'s year-month is dense.
+    """Densify each month, up to and including the year-month of `now`.
 
     Idempotent and cheap when the table is already current — densify scans and
     returns 0 writes. Called at the top of every handler whose correctness
@@ -133,9 +133,9 @@ def _ensure_hydrated(now: datetime) -> None:
 def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Route API Gateway HTTP API requests."""
     try:
-        # Compute the effective "now" once at the top and thread it through every
-        # handler that needs it. Honors the dev-only X-Simulated-Date header; prod
-        # always uses real wall-clock time.
+        # Work out the effective "now" one time here, and pass it to every handler that
+        # needs it. In dev it obeys the X-Simulated-Date header. In prod it always uses the
+        # real time.
         now = _resolve_now(event)
 
         method = event["requestContext"]["http"]["method"]
@@ -243,8 +243,8 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             account_id = path.split("/")[-1]
             return _put_account(event, account_id)
 
-        # Net worth snapshots. The literal /history path is checked before the
-        # /{YYYY-MM} pattern so "history" isn't parsed as a year-month.
+        # The net worth snapshots. The fixed /history path comes before the /{YYYY-MM}
+        # pattern, so that the app does not read "history" as a year-month.
         elif path == "/api/net-worth/history" and method == "GET":
             return _get_networth_history()
         elif path.startswith("/api/net-worth/") and method == "GET":
@@ -279,9 +279,9 @@ def _post_category(event: dict[str, Any], now: datetime) -> dict[str, Any]:
     if not name:
         return _response(400, "name is required")
 
-    # initialTarget defaults to 0 (a valid explicit "no spend this month" target,
-    # distinct from null which would mean "no target ever set"). Must be a
-    # non-negative integer in millionths of a dollar if provided.
+    # initialTarget is 0 by default. That is a real target, and it means "no spend this
+    # month". It differs from null, which means that no one set a target. If the caller gives
+    # a value, it must be an integer in millionths of a dollar, and it must not be negative.
     initial_target = body.get("initialTarget", 0)
     if not isinstance(initial_target, int) or initial_target < 0:
         return _response(400, "initialTarget must be a non-negative integer (millionths of a dollar)")
@@ -292,7 +292,7 @@ def _post_category(event: dict[str, Any], now: datetime) -> dict[str, Any]:
     if _CATEGORY_GROUP_TABLE.get(group_id) is None:
         return _response(400, f"groupId '{group_id}' does not exist")
 
-    # Hydrate before creating so the new category lands in a dense current month.
+    # Densify first. The new category then goes into a current month that is dense.
     _ensure_hydrated(now)
 
     try:
@@ -300,16 +300,16 @@ def _post_category(event: dict[str, Any], now: datetime) -> dict[str, Any]:
     except ValueError as e:
         return _response(400, str(e))
 
-    # New categories appear in the current month immediately so Spec-1-style summaries
-    # surface them. Walk-back from later months will then resolve to initialTarget until
-    # the user pins something different. See architecture: "Category lifecycle".
+    # A new category appears in the current month at once, so that a summary of the kind
+    # Spec 1 describes shows it. A walk-back from a later month then finds initialTarget,
+    # until the user pins a different amount. See "Category lifecycle" in the architecture.
     _BUDGET_TABLE.put_single(_year_month_of(now), item["categoryId"], initial_target)
 
     return _json_response(201, json.dumps(item, default=_json_default))
 
 
 def _put_category(event: dict[str, Any], category_id: str) -> dict[str, Any]:
-    """Rename a category and/or move it to a different group.
+    """Rename a category, move it to a different group, or do both.
 
     Body: `{name?: string, groupId?: string}`. At least one must be present.
     `name` triggers the nameHistory append behavior (see CategoryTable.update);
@@ -353,7 +353,7 @@ def _put_category(event: dict[str, Any], category_id: str) -> dict[str, Any]:
 def _deactivate_category(
     event: dict[str, Any], category_id: str, user: dict[str, str], now: datetime
 ) -> dict[str, Any]:
-    """Soft-delete a category. Drops future pin rows on confirmation.
+    """Set a category to inactive. On a confirmation, delete its future pin rows.
 
     Two-phase: without `confirm: true` in the body, returns the list of future months
     that have pin rows for this category (so the UI can prompt the user). With
@@ -374,7 +374,7 @@ def _deactivate_category(
     affected_months = _BUDGET_TABLE.find_future_months_with_category(category_id, current_month)
 
     if affected_months and not confirm:
-        # Surface affectedMonths so the UI can render a confirmation dialog. No mutation yet.
+        # Return affectedMonths, so that the UI can show a confirmation box. Change nothing yet.
         return _json_response(
             409,
             json.dumps(
@@ -389,8 +389,8 @@ def _deactivate_category(
     if affected_months and not explanation:
         return _response(400, "explanation is required when dropping future pin rows")
 
-    # Drop pin rows + audit before flipping the active flag so the audit trail
-    # records the prior amounts.
+    # Delete the pin rows and write the audit entries before the active flag changes. The
+    # audit trail then holds the amounts that were there before.
     for month in affected_months:
         existing = _BUDGET_TABLE.get_targets(month)
         old_amount = next((t["amount"] for t in existing if t["categoryId"] == category_id), None)
@@ -419,7 +419,7 @@ def _reactivate_category(category_id: str) -> dict[str, Any]:
 
 
 def _get_category(event: dict[str, Any], category_id: str, now: datetime) -> dict[str, Any]:
-    """GET /api/categories/{id}. Currently only used with ?deletion_preview=true.
+    """Answer GET /api/categories/{id}. Today only ?deletion_preview=true uses it.
 
     Admin-only impact summary for the hard-delete flow: counts of Budget rows,
     Transactions, and locked months affected. The locked-month count is what
@@ -440,9 +440,9 @@ def _get_category(event: dict[str, Any], category_id: str, now: datetime) -> dic
     budget_count = _BUDGET_TABLE.count_rows_for_category(category_id)
     txn_count = _TRANSACTIONS_TABLE.count_rows_for_category(category_id)
 
-    # Locked months = past months (year_month <= current_ym minus grace) with Budget
-    # rows for this category. The grace window is still mutable so we treat it as
-    # "not locked" here — matches the editability state machine.
+    # A locked month is a past month with a Budget row for this category, where
+    # year_month is at or before current_ym less the grace period. A month in grace is still
+    # open to change, so we count it as not locked. This matches the editability function.
     current_ym = _year_month_of(now)
     past_months = _BUDGET_TABLE.find_past_months_with_category(category_id, current_ym)
     locked_months = [ym for ym in past_months if editability(ym, now) == "LOCKED"]
@@ -464,7 +464,7 @@ def _get_category(event: dict[str, Any], category_id: str, now: datetime) -> dic
 
 
 def _hard_delete_category(event: dict[str, Any], category_id: str, user: dict[str, str]) -> dict[str, Any]:
-    """Irreversibly delete a category and every row referencing it.
+    """Delete a category, and every row that names it, for ever.
 
     Admin-only via JWT group claim (no `override` flag — this is intrinsically
     admin per architecture: "CATEGORY_HARD_DELETE is the only intrinsically
@@ -499,8 +499,8 @@ def _hard_delete_category(event: dict[str, Any], category_id: str, user: dict[st
     txn_rows_deleted = _TRANSACTIONS_TABLE.delete_all_for_category(category_id)
     _CATEGORY_TABLE.delete(category_id)
 
-    # Audit entry is written last so the cascade either completes fully or leaves
-    # nothing to apologize for in the log. effectiveYearMonth is null per spec.
+    # Write the audit entry last. The cascade then either finished in full, or it left
+    # nothing in the log to explain. effectiveYearMonth is null, as the spec states.
     _AUDIT_LOG_TABLE.write_entry(
         effective_year_month=None,
         category_id=category_id,
@@ -1059,7 +1059,7 @@ def _post_transactions_upload(event: dict[str, Any], now: datetime) -> dict[str,
     headers = rows[0]
     data_rows = rows[1:]
 
-    # Step 1: Map columns using LLM
+    # Step 1: the LLM finds which column is which.
     sample_rows = data_rows[:5]
     column_mapping = map_columns(headers, sample_rows)
 
@@ -1115,7 +1115,7 @@ def _post_transactions_upload(event: dict[str, Any], now: datetime) -> dict[str,
     if not parsed_transactions:
         return _response(400, "No valid transactions found in CSV")
 
-    # Step 3: Categorize using LLM
+    # Step 3: the LLM gives a category to each row.
     categories = _CATEGORY_TABLE.list_active()
     if categories:
         assignments = categorize_transactions(descriptions, categories)
@@ -1553,7 +1553,7 @@ def _get_networth_history() -> dict[str, Any]:
 
 
 def _parse_json_body(event: dict[str, Any]) -> dict[str, Any] | None:
-    """Parse JSON body from API Gateway event, handling base64 encoding."""
+    """Parse the JSON body of an API Gateway event. It decodes base64 when the body needs it."""
     raw_body = event.get("body", "")
     if event.get("isBase64Encoded") and raw_body:
         raw_body = base64.b64decode(raw_body).decode("utf-8")

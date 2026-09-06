@@ -7,7 +7,7 @@ _SSM_CLIENT = boto3.client("ssm")
 
 
 def get_ssm_param(name: str) -> str:
-    """Fetch an SSM parameter, caching across invocations."""
+    """Get an SSM parameter. The value stays in memory between calls to the Lambda."""
     if name not in _SSM_CACHE:
         response = _SSM_CLIENT.get_parameter(Name=name, WithDecryption=True)
         _SSM_CACHE[name] = response["Parameter"]["Value"]

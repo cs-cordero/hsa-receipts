@@ -38,10 +38,9 @@ export function redirectToLogin(): void {
 
 export type CallbackResult = { kind: "success" } | { kind: "no-code" } | { kind: "error"; reason: string };
 
-// Deduplicates concurrent callback handling — React StrictMode double-mounts
-// CallbackPage in dev, and without this the second invocation finds the PKCE
-// verifier already consumed by the first and redirects to login, causing an
-// infinite OAuth loop.
+// Permit one callback at a time. In dev, React StrictMode mounts CallbackPage two times.
+// Without this guard, the second call finds that the first call used the PKCE verifier
+// already. It then sends the user to the sign-in page, and the OAuth loop never ends.
 let _callbackPromise: Promise<CallbackResult> | null = null;
 
 export function handleCallback(): Promise<CallbackResult> {

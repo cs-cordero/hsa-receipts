@@ -1,4 +1,4 @@
-"""Budget densification and walk-back resolution.
+"""Make the budget months dense, and resolve a value by a walk back.
 
 Storage model (see docs/personal-finance-architecture.md "Carry-Forward"):
 
@@ -20,10 +20,10 @@ from typing import Any
 
 from corderohq.aws.dynamodb import BudgetTable, CategoryTable
 
-# Safety bound on walk-back depth. The architecture says walk-back has "no
-# fixed depth — sweep until you find a row or exhaust history," but an empty
-# table plus a future-month request would otherwise loop forever. 240 months
-# (20 years) is far beyond any plausible household budget history.
+# A safety limit on how far the walk back goes. The architecture says that the walk back
+# has no fixed limit, and that it continues until it finds a row or reaches the end of the
+# history. But an empty table and a request for a future month would then loop for ever.
+# 240 months, which is 20 years, is far more than any household budget history.
 _MAX_WALKBACK_MONTHS = 240
 
 
@@ -48,7 +48,7 @@ def densify(
     category_table: CategoryTable,
     current_ym: str,
 ) -> int:
-    """Bring the Budget table forward so every month up to `current_ym` is dense.
+    """Move the Budget table forward. Every month up to `current_ym` then becomes dense.
 
     Walks forward from `M_last + 1` through `current_ym` chronologically, writing
     a row per currently-active category for each month. The amount copies from the
@@ -86,7 +86,7 @@ def densify(
         for cat in active_cats:
             cat_id = cat["categoryId"]
             if (month, cat_id) in by_key:
-                # Already present (e.g. an explicit pin written before rollover).
+                # A row is here already, such as a pin the user wrote before the month changed.
                 continue
             amount = _walk_back_for(by_key, month, cat_id)
             by_key[(month, cat_id)] = amount
@@ -101,7 +101,7 @@ def resolve_future_targets(
     category_table: CategoryTable,
     year_month: str,
 ) -> list[dict[str, Any]]:
-    """Effective targets for a future yearMonth via walk-back, with pin flags.
+    """Return the targets for a future yearMonth, found by a walk back, with the pin flags.
 
     For each currently-active category:
     - If an explicit pin exists at `(year_month, categoryId)`, include it with
@@ -144,7 +144,7 @@ def resolve_future_targets(
 
 
 def walk_back_for(by_key: dict[tuple[str, str], Any], target: str, cat_id: str) -> Any:
-    """Walk back from `target` looking for the most recent row for `cat_id`.
+    """Walk back from `target`, and find the most recent row for `cat_id`.
 
     The `by_key` dict must hold the full in-memory state to walk through (as built
     by callers from `scan_all`). Returns the amount of the nearest prior row, or
@@ -158,12 +158,12 @@ def walk_back_for(by_key: dict[tuple[str, str], Any], target: str, cat_id: str) 
     return None
 
 
-# Backward-compat alias for callers inside this module.
+# An old name for the function above. Callers in this module still use it.
 _walk_back_for = walk_back_for
 
 
 def _months_between_exclusive(start_ym: str, end_ym: str) -> list[str]:
-    """Months strictly after `start_ym` up to and including `end_ym`."""
+    """Return the months after `start_ym`, up to and including `end_ym`."""
     result: list[str] = []
     cursor = next_year_month(start_ym)
     while cursor <= end_ym:

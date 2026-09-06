@@ -21,8 +21,9 @@ export interface Category {
     createdAt: string;
     updatedAt: string;
     nameHistory: CategoryNameHistoryEntry[];
-    // Pre-CP12 rows may not yet have these — backfill script + new creates always do.
-    // Parser defaults missing values to empty/0 so the UI doesn't crash on legacy rows.
+    // A row from before CP12 may not hold these two fields. The backfill script writes
+    // them, and each new row has them. When a value is absent, the parser uses an empty
+    // string or 0. The UI then does not fail on an old row.
     groupId: string;
     orderInGroup: number;
 }
@@ -131,8 +132,8 @@ export interface ParsedTransaction {
     categoryName: string;
 }
 
-// Closed enum so we can render specific UI per issue. Adding a new issue here
-// requires updating the backend's `_validate_commit_rows`.
+// A closed set, so that the UI can show something different for each issue. If you add an
+// issue here, you must also change `_validate_commit_rows` in the backend.
 export type RowValidationIssue = "missing_category" | "locked_month";
 
 export interface RowValidation {
@@ -156,7 +157,7 @@ export interface CommitValidationError {
     validations: RowValidation[];
 }
 
-// --- Net worth tracking ---
+// --- The net worth record ---
 
 // A person in the household. Owner references on accounts point at personId.
 export interface Person {
@@ -167,8 +168,9 @@ export interface Person {
     updatedAt: string;
 }
 
-// Amortization facts for a debt (mortgage, auto/student loan). Captured for the
-// future simulation feature; the tracking UI reads them back only to edit.
+// The amortization values for a debt, such as a mortgage, a car loan, or a student loan.
+// We hold them for the simulation feature that comes later. Today the UI reads them back
+// for one purpose only: so that a user can change them.
 export interface LoanTerms {
     interestRate: number; // annual rate as a decimal, e.g. 0.04875 for 4.875%
     monthlyPayment: number; // integer millionths of a dollar (principal + interest)
@@ -187,7 +189,7 @@ export interface Account {
     // Tracked but left out of the Total Assets / Liabilities / Net Worth sums
     // (e.g. a 529 or custodial account you follow but don't own).
     excludedFromNetWorth: boolean;
-    // Present iff `target_date` is one of the assetClasses (the fund's vintage year).
+    // This is here only when `target_date` is in assetClasses. It is the year of the fund.
     targetYear?: number;
     loanTerms?: LoanTerms;
     notes?: string;
@@ -208,10 +210,11 @@ export interface AccountCreate {
     notes?: string;
 }
 
-// Edit payload: every field optional. For the nullable extras, an explicit `null`
-// REMOVES the attribute server-side; omitting the key leaves it untouched.
-// `owners` and `assetClasses`, when present, are non-empty lists that replace the
-// current values. `accountType` and `liability` are immutable and not editable here.
+// The body for an edit. Every field is optional. For a field that accepts null, a `null`
+// value REMOVES the attribute on the server. If the key is absent, the server leaves the
+// attribute as it is. `owners` and `assetClasses`, when present, must not be empty, and
+// they take the place of the current values. No one can change `accountType` or
+// `liability` here.
 export type AccountUpdate = Partial<{
     name: string;
     assetClasses: string[];
@@ -244,8 +247,8 @@ export const ACCOUNT_TYPES = [
     "other_liability",
 ] as const;
 
-// Selectable asset classes for the account picker. Selecting `target_date` requires
-// a target year (see TARGET_YEAR_VINTAGES).
+// The asset classes that the account picker offers. A choice of `target_date` also needs
+// a target year. See TARGET_YEAR_VINTAGES.
 export const ASSET_CLASSES = [
     "cash",
     "us_equity_large_cap",
@@ -319,8 +322,8 @@ export const ASSET_CLASS_LABELS: Record<string, string> = {
     other: "Other",
 };
 
-// Prefill = the most recent recorded value strictly before this month, powering
-// the entry grid's "carried from 2026-06" convenience. null means no prior value.
+// A prefill is the most recent value from before this month. The entry grid uses it for
+// the "carried from 2026-06" text. A null means that no earlier value exists.
 export interface NetWorthPrefill {
     value: number;
     fromYearMonth: string;

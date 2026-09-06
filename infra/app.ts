@@ -16,8 +16,8 @@ const env = {
     region: "us-east-1",
 };
 
-// The single corderohq.com hosted zone. Deploys ahead of everything else — the shared
-// certificate cannot finish DNS validation until this zone is authoritative in public DNS.
+// The single corderohq.com hosted zone. Deploy this stack before all the others. The shared
+// certificate cannot complete its DNS validation until this zone is authoritative in public DNS.
 const dns = new DnsStack(app, "DnsStack", { env, terminationProtection: true });
 
 const platform = new PlatformStack(app, "PlatformStack", {
@@ -48,7 +48,7 @@ const hsaWeb = new HsaWebStack(app, "HsaWebStack", {
 hsaWeb.addDependency(platform);
 hsaWeb.addDependency(hsaReceipts);
 
-// Math quiz — a static page only. No API, no sign-in, no database.
+// The math quiz is a static page only. It has no API, no sign-in, and no database.
 const mathQuiz = new MathQuizStack(app, "MathQuizStack", {
     env,
     terminationProtection: true,
@@ -57,8 +57,9 @@ const mathQuiz = new MathQuizStack(app, "MathQuizStack", {
 });
 mathQuiz.addDependency(platform);
 
-// Personal finance app — instantiate for each stage. Prod stacks carry termination
-// protection so an accidental `cdk destroy` can't wipe the live data or user pool client.
+// The personal finance app. Make one set of stacks for each stage. The prod stacks have
+// termination protection, so that a `cdk destroy` by mistake cannot remove the live data or
+// the user pool client.
 function createPersonalFinanceStacks(stage: Stage): void {
     const prefix = `PersonalFinance-${stage}`;
     const terminationProtection = stage === "prod";

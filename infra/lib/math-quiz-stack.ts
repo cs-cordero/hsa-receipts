@@ -29,7 +29,7 @@ interface MathQuizStackProps extends cdk.StackProps {
  * - S3 bucket: math-quiz-assets-{account}-{region} (the game page)
  * - CloudFront distribution: math.corderohq.com → S3 (OAC, HTTPS redirect)
  * - Route 53 A record: math.corderohq.com → CloudFront
- * - S3 BucketDeployment: math/ → the bucket (CloudFront invalidation)
+ * - S3 BucketDeployment: web/math/ → the bucket (CloudFront invalidation)
  */
 export class MathQuizStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props: MathQuizStackProps) {
@@ -37,7 +37,7 @@ export class MathQuizStack extends cdk.Stack {
 
         cdk.Tags.of(this).add("project", "math-quiz");
 
-        // Everything here is rebuilt from math/ on each deploy, so DESTROY is safe.
+        // Each deploy builds this bucket again from web/math/, so DESTROY is safe.
         const assetsBucket = new s3.Bucket(this, "AssetsBucket", {
             bucketName: `math-quiz-assets-${this.account}-${this.region}`,
             blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -53,14 +53,14 @@ export class MathQuizStack extends cdk.Stack {
                 viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
             },
             defaultRootObject: "index.html",
-            // The game is one page, so send every other path back to it.
+            // The game is one page. Send every other path back to that page.
             errorResponses: [
                 { httpStatus: 403, responseHttpStatus: 200, responsePagePath: "/index.html" },
                 { httpStatus: 404, responseHttpStatus: 200, responsePagePath: "/index.html" },
             ],
             priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
-            // math.corderohq.com is already covered by the *.corderohq.com name on the shared
-            // certificate, so this subdomain needs no certificate work.
+            // The *.corderohq.com name on the shared certificate covers math.corderohq.com
+            // already. This subdomain therefore needs no work on the certificate.
             domainNames: [MATH_DOMAIN],
             certificate: props.certificate,
         });
@@ -74,7 +74,7 @@ export class MathQuizStack extends cdk.Stack {
         new s3deploy.BucketDeployment(this, "MathAssets", {
             // `followSymlinks: EXTERNAL` resolves favicon.svg, which points at ../shared/.
             sources: [
-                s3deploy.Source.asset("../math", {
+                s3deploy.Source.asset("../web/math", {
                     followSymlinks: cdk.SymlinkFollowMode.EXTERNAL,
                 }),
             ],

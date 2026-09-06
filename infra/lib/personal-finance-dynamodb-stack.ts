@@ -34,11 +34,11 @@ export class PersonalFinanceDynamoDbStack extends cdk.Stack {
         super(scope, id, props);
 
         const { stage } = props;
-        // Prod tables are retained on stack delete so an accidental `cdk destroy` (or
-        // termination-protection lift) doesn't wipe live data. Dev tables destroy so we
-        // can iterate freely. Schema-breaking changes that need table replacement (like
-        // the CP3 audit-log PK change) must be handled with a one-shot migration script
-        // when they touch prod.
+        // A prod table stays when the stack is deleted. A `cdk destroy` by mistake, or a lift
+        // of the termination protection, therefore cannot remove the live data. A dev table is
+        // deleted, so that we can change it freely. A change to a schema that needs a new
+        // table, such as the CP3 change to the audit-log PK, needs a migration script. Run
+        // that script one time when the change reaches prod.
         const removalPolicy = stage === "prod" ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY;
 
         cdk.Tags.of(this).add("project", "personal-finance");
@@ -71,8 +71,8 @@ export class PersonalFinanceDynamoDbStack extends cdk.Stack {
 
         this.budgetAuditLogTable = new dynamodb.Table(this, "BudgetAuditLogTable", {
             tableName: `BudgetAuditLog-${stage}`,
-            // Single-partition: PK is always the literal "AUDIT", SK is a ULID. Recent-N reads are
-            // one Query with ScanIndexForward=false.
+            // One partition only. The PK is always the string "AUDIT", and the SK is a ULID. A
+            // read of the most recent N entries is then one Query, with ScanIndexForward=false.
             partitionKey: { name: "entityType", type: dynamodb.AttributeType.STRING },
             sortKey: { name: "sortId", type: dynamodb.AttributeType.STRING },
             billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -89,11 +89,11 @@ export class PersonalFinanceDynamoDbStack extends cdk.Stack {
             removalPolicy,
         });
 
-        // Net worth tracking (design: net-worth-tracking-design.md §4).
+        // The tables for the net worth record.
         this.profileTable = new dynamodb.Table(this, "ProfileTable", {
             tableName: `Profile-${stage}`,
-            // Item-collection: PK is always "HOUSEHOLD", one item per person (ULID SK).
-            // A single Query returns the whole household.
+            // One item collection. The PK is always "HOUSEHOLD", and there is one item for each
+            // person, with a ULID as the SK. One Query then returns the whole household.
             partitionKey: { name: "householdId", type: dynamodb.AttributeType.STRING },
             sortKey: { name: "personId", type: dynamodb.AttributeType.STRING },
             billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,

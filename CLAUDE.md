@@ -2,45 +2,62 @@
 
 ## Project Overview
 
-Read `docs/hsa-architecture.md` (HSA receipts app), `docs/personal-finance-architecture.md` (personal finance app — today houses the family budget feature, with more features planned), and `docs/user_guide.md` to understand the project structure, AWS architecture, and common workflows.
+Read these three documents first. They show the project structure, the AWS architecture, and the
+usual tasks.
+
+- `docs/hsa-architecture.md` — the HSA receipts app
+- `docs/personal-finance-architecture.md` — the personal finance app. It holds the family budget
+  feature today, and more features will follow.
+- `docs/user_guide.md` — setup, deploy steps, and daily use
 
 ## Repository Structure
 
 - `infra/` — AWS CDK infrastructure (TypeScript 5.x, Node.js)
 - `lambda/` — Lambda function code (Python 3.13)
-- `personal-finance/` — React frontend for the personal finance app
-- `web/` — Static frontend for the HSA app
+- `web/` — All frontend source, one folder for each app
+    - `web/hsa/` — Static frontend for the HSA app
+    - `web/root/` — Static landing page for corderohq.com
+    - `web/math/` — Static math quiz page
+    - `web/personal-finance/` — React frontend for the personal finance app
+    - `web/shared/` — Assets that every frontend uses, such as the favicon
 - `docs/` — Project documentation
 
 ## Coding Standards
 
 ### Python (`lambda/`)
 - Package manager: **uv**
-- Linter/formatter: **ruff** (120 char line width, 4-space indent, double quotes)
+- Linter and formatter: **ruff** (120 character line width, 4-space indent, double quotes)
 - Type checker: **ty**
-- Tests: **pytest** (run from `lambda/` directory)
-- Typing is required everywhere
-- Run tests: `uv run pytest`
-- Run linter: `uv run ruff check .`
-- Run formatter: `uv run ruff format .`
+- Tests: **pytest**. Run them from the `lambda/` directory.
+- Give a type to everything.
+- Run the tests: `uv run pytest`
+- Run the linter: `uv run ruff check .`
+- Run the formatter: `uv run ruff format .`
 
 ### TypeScript (`infra/`)
 - Package manager: **npm**
-- Linter: **eslint** (flat config with `defineConfig()`)
-- Formatter: **prettier** (120 char print width, 4-space indent, double quotes)
+- Linter: **eslint** (flat config, with `defineConfig()`)
+- Formatter: **prettier** (120 character print width, 4-space indent, double quotes)
 - Compiler: **tsc** (strict mode)
-- Always run TS tooling from the `infra/` directory
+- Always run the TypeScript tools from the `infra/` directory.
 
 ## Running Commands
 
-- **Do not run test suites, builds, or lint commands** (`npm test`, `npm run build`, `uv run pytest`, `uv run ruff`, `npx tsc`, etc.) unless explicitly asked. These produce verbose output that consumes tokens quickly.
-- Instead, tell the user which commands to run and what to look for. The user will run them and paste back any errors or relevant output.
+- **Do not run a test suite, a build, or a lint command** — `npm test`, `npm run build`,
+  `uv run pytest`, `uv run ruff`, `npx tsc`, and others — unless the user asks you to. They write
+  many lines of output, and that output uses tokens quickly.
+- Tell the user which command to run, and what to look for. The user runs it, and then sends you
+  any error or other output that matters.
 
 ## Rules
 
-- **Commit messages must be a single line.** No multi-line commit messages.
-- **Never include Co-Authored-By in commit messages.**
-- **Never use deprecated features or packages.** Always use the latest stable APIs, options, and versions from our dependencies. If you notice deprecated usage in existing code, flag it or fix it.
-- All module-level private constants use ALL_CAPS with a single leading underscore (e.g., `_SNS_CLIENT`).
-- Required environment variables must use `get_env_var()` from `util.py`, which raises on missing or blank values.
-- **Every CDK stack class must have a JSDoc comment listing all AWS resources it creates.** When adding, removing, or modifying resources in a stack, update the class docstring to match.
+- **Write a commit message of one line.** Do not write a message body.
+- **Do not put a "Co-Authored-By" line in a commit message.**
+- **Do not use a deprecated feature or package.** Always use the newest stable API, option, and
+  version of each dependency. If you find deprecated code, tell the user about it or correct it.
+- Give every private constant at module level a name in ALL_CAPS, with one underscore in front.
+  For example, `_SNS_CLIENT`.
+- Read every necessary environment variable with `get_env_var()` from `util.py`. That function
+  raises an error if the value is absent or blank.
+- **Give every CDK stack class a JSDoc comment that lists each AWS resource it makes.** When you
+  add, remove, or change a resource in a stack, change the class docstring to match.
